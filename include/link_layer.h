@@ -4,6 +4,11 @@
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
 
+#include <fcntl.h>
+#include <termios.h>
+#include <signal.h>
+#include "../code/stateMachine.h"
+
 typedef enum
 {
     LlTx,

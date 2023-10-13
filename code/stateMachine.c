@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include "stateMachine.h"
 
 void changeState(StateMachine *machine, State state) {
@@ -52,6 +51,7 @@ void StateHandler(StateMachine *machine, unsigned char byteToProcess, unsigned c
     }
 }
 
+/*
 int main() {
     StateMachine machine = {START};
     unsigned char frame[5] = {0};
@@ -94,5 +94,6 @@ int main() {
 
     return 0;
 }
+*/
 
 

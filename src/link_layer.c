@@ -1,23 +1,51 @@
 // Link layer protocol implementation
 
 #include "link_layer.h"
-#include <fcntl.h>
-#include <termios.h>
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 #define BUF_SIZE 5
+
+int alarmEnabled = FALSE;
+int maxTries = 0;
+
+// Alarm function handler's
+void SendSet(int signal, int fd) {
+    // Send Set
+    unsigned char SET_frame[BUF_SIZE] = {0};
+    SET_frame[0] = FLAG;
+    SET_frame[1] = ADDRESS_1;
+    SET_frame[2] = SET;
+    SET_frame[3] = SET_frame[1]^SET_frame[2];
+    SET_frame[4] = FLAG;
+
+    int bytes = write(fd, SET_frame, BUF_SIZE);
+    printf("Emissor just sent SET #%d!\n", maxTries);
+    printf("Waiting for UA confirmation!\n");  
+
+    alarmEnabled = FALSE;
+    maxTries++;
+}
+
+void SendUA(int fd) {
+    // Send UA
+    unsigned char UA_frame[BUF_SIZE] = {0};
+    UA_frame[0] = FLAG;
+    UA_frame[1] = ADDRESS_1;
+    UA_frame[2] = UA;
+    UA_frame[3] = UA_frame[1]^UA_frame[2];
+    UA_frame[4] = FLAG;
+
+    int bytes = write(fd, UA_frame, BUF_SIZE);
+    printf("Recepter just sent UA!\n");
+}
+
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
-    volatile int STOP = FALSE;
-    // Open serial port device for reading and writing and not as controlling tty
-    // because we don't want to get killed if linenoise sends CTRL-C.
+int llopen(LinkLayer connectionParameters) {
     int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
-    if (fd < 0)
-    {
+    if (fd < 0) {
         perror(connectionParameters.serialPort);
         exit(-1);
     }
@@ -26,8 +54,7 @@ int llopen(LinkLayer connectionParameters)
     struct termios newtio;
 
     // Save current port settings
-    if (tcgetattr(fd, &oldtio) == -1)
-    {
+    if (tcgetattr(fd, &oldtio) == -1) {
         perror("tcgetattr");
         exit(-1);
     }
@@ -48,55 +75,59 @@ int llopen(LinkLayer connectionParameters)
     tcflush(fd, TCIOFLUSH);
 
     // Set new port settings
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1)
-    {
+    if (tcsetattr(fd, TCSANOW, &newtio) == -1) {
         perror("tcsetattr");
         exit(-1);
     }
+    printf("Port configuration step done!\n");
 
-    printf("New termios structure set\n");
-    unsigned char buf[BUF_SIZE] = {0};
-
-    // Role of the Transmissor
+    // Emissor
     if (connectionParameters.role == LlTx) {
-        // Send Set
-        unsigned char buf[BUF_SIZE] = {0};
+        // SET UP THE ALARM
+        (void)signal(SIGALRM, SendSet);
 
-        buf[0] = FLAG;
-        buf[1] = ADDRESS_1;
-        buf[2] = SET;
-        buf[3] = buf[1]^buf[2];
-        buf[4] = FLAG;
+        // UA confirmation auxiliar variables
+        unsigned char byte_received = 0;
+        unsigned char UA_frame[BUF_SIZE] = {0};
+        StateMachine UA_stateMachine = {START};
 
-        int bytes = write(fd, buf, BUF_SIZE);
-        printf("Transmissor sending SET!\n");
-
-        // Wait until all bytes have been written to the serial port
-        sleep(1);
-
-        // Receive UA
-        while (STOP == FALSE)
-        {
-            // Returns after 5 chars have been input
-            int bytes = read(fd, buf, BUF_SIZE);
-            // Check if the "Trama" is correct
-            if (buf[0] == FLAG && (buf[1]^buf[2] == buf[3] && buf[2] == UA) && buf[4] == FLAG) {
-                printf("Transmissor confirmed UA reception!\n");
-                // Connection confirmed
-                STOP = TRUE;
+        // RETRANSMIT MECHANISM AND UA CONFIRMATION
+        while (maxTries < connectionParameters.nRetransmissions) {
+            if (alarmEnabled == FALSE) {
+                alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+                alarmEnabled = TRUE;
             }
-            
+            // Waiting for UA confirmation
+            read(fd, byte_received, 1);
+            StateHandler(&UA_stateMachine, byte_received, UA_frame, Communication);
+
+            // UA frame received and connection is now established
+            if (UA_stateMachine.currentState == STOP) {
+                printf("UA frame received!\n");
+                return 0;
+            }
         }
     }
 
     // Role of the Receiver
     if (connectionParameters.role == LlRx) {
-        // Receive Set
+        // SET confirmation auxiliar variables
+        unsigned char byte_received = 0;
+        unsigned char SET_frame[BUF_SIZE] = {0};
+        StateMachine SET_stateMachine = {START};
 
-        // Send UA
+        // Waiting for SET confirmation
+        read(fd, byte_received, 1);
+        StateHandler(&SET_stateMachine, byte_received, SET_frame, Communication);
+
+        // SET frame received
+        if (SET_stateMachine.currentState == STOP) {
+            printf("SET frame received!\n");
+            SendUA(fd);
+            printf("UA frame sent!\n");
+            return 0;
+        }
     }
-
-    // TODO
 
     return 1;
 }

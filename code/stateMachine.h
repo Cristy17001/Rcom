@@ -1,9 +1,6 @@
-// Bytes of the frame
-#define FLAG 0x7E
-#define ADDRESS_1 0x03
-#define ADDRESS_2 0x01
-#define SET 0x03
-#define UA 0x07
+#include <stdio.h>
+#include "../src/macros.h"
+
 
 // Define states
 typedef enum {
