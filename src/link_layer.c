@@ -8,6 +8,7 @@
 
 int alarmEnabled = FALSE;
 int maxTries = 0;
+int fd = 0;
 
 // Alarm function handler's
 void SendSet(int signal, int fd) {
@@ -27,6 +28,17 @@ void SendSet(int signal, int fd) {
     maxTries++;
 }
 
+// Alarm function handler's
+void SendDataPacket(int signal, int fd, unsigned char* frame, int frameSize) {
+
+    int bytes = write(fd, frame, frameSize);
+    printf("Emissor trying to send DataPacket #%d!\n", maxTries);
+    printf("Waiting for UA confirmation!\n");  
+
+    alarmEnabled = FALSE;
+    maxTries++;
+}
+
 void SendUA(int fd) {
     // Send UA
     unsigned char UA_frame[BUF_SIZE] = {0};
@@ -40,11 +52,53 @@ void SendUA(int fd) {
     printf("Recepter just sent UA!\n");
 }
 
+unsigned char PayloadBCC2(const unsigned char *buf, int bufSize) {
+    // Payload BCC2
+    unsigned char BCC2 = buf[0];
+    for (int i = 1; i < bufSize; i++) {
+        BCC2 ^= buf[i];
+    }
+    return BCC2;
+}
+
+unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize) {
+    unsigned char* stuffedBuf = (unsigned char*)malloc(bufSize * 2 * sizeof(unsigned char));
+    
+    if (stuffedBuf == NULL) {
+        fprintf(stderr, "Memory allocation failed.\n");
+        exit(1);
+    }
+    
+    int stuffedIndex = 0;
+    
+    for (int i = 0; i < bufSize; i++) {
+        if (buf[i] == 0x7e) {
+            stuffedBuf[stuffedIndex++] = 0x7d;
+            stuffedBuf[stuffedIndex++] = 0x5e;
+        } else if (buf[i] == 0x7d) {
+            stuffedBuf[stuffedIndex++] = 0x7d;
+            stuffedBuf[stuffedIndex++] = 0x5d;
+        } else {
+            stuffedBuf[stuffedIndex++] = buf[i];
+        }
+    }
+    
+    stuffedBuf = realloc(stuffedBuf, stuffedIndex * sizeof(unsigned char));
+    
+    if (stuffedBuf == NULL) {
+        fprintf(stderr, "Memory reallocation failed.\n");
+        exit(1);
+    }
+    *newSize = stuffedBuf;
+    
+    return stuffedBuf;
+}
+
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters) {
-    int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
+    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
     if (fd < 0) {
         perror(connectionParameters.serialPort);
         exit(-1);
@@ -135,9 +189,74 @@ int llopen(LinkLayer connectionParameters) {
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-int llwrite(const unsigned char *buf, int bufSize)
-{
-    // TODO
+int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSize) {
+    // Payload BCC2
+    unsigned char BCC2 = PayloadBCC2(buf, bufSize);
+
+    // Stuffing
+    int newSize = 0;
+    unsigned char* stuffedBuf = Stuffing(buf, bufSize, &newSize);
+
+    // Allocate memory for frame
+    unsigned char* frame = (unsigned char*)malloc((newSize + 6) * sizeof(unsigned char));
+    if (frame == NULL) {
+        fprintf(stderr, "Memory allocation failed.\n");
+        exit(1);
+    }
+
+    // Populate frame
+    frame[0] = FLAG;
+    frame[1] = 0x01;
+    frame[2] = ADDRESS_1;
+    frame[3] = frame[1] ^ frame[2];
+    for (int i = 0; i < newSize; i++) {
+        frame[i+4] = stuffedBuf[i];
+    }
+    frame[newSize+4] = BCC2;
+    frame[newSize+5] = FLAG;
+
+
+    // Send the frame
+
+    //ALARM SETUP
+    (void)signal(SIGALRM, SendDataPacket);
+    alarmEnabled = FALSE;
+    maxTries = 0;
+
+    unsigned char byte_received = 0;
+
+    // RETRANSMITION MECHANISM AND RR CONFIRMATION
+    while (maxTries < connectionParameters.nRetransmissions) {
+        if (alarmEnabled == FALSE) {
+            alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+            alarmEnabled = TRUE;
+        }
+
+        StateMachine RR_stateMachine = {START};
+        unsigned char* RR_frame = {0};
+
+        // Waiting for RR confirmation
+        read(fd, byte_received, 1);
+        StateHandler(&RR_stateMachine, byte_received, RR_frame, Communication);
+
+
+
+        /////////////////////////////////////////////////////////////////////////////////////
+        // Confirmação ainda não está a functionar, aceitaria RR e REJ como se fossem iguais
+        /////////////////////////////////////////////////////////////////////////////////////
+
+        // UA frame received and connection is now established
+        if (RR_stateMachine.currentState == STOP) {
+            printf("Positive ACK frame received!\n");
+            free(stuffedBuf);
+            free(frame);
+            return 0;
+        }
+    }
+
+    // Free dynamically allocated memory
+    free(stuffedBuf);
+    free(frame);
 
     return 0;
 }

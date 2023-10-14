@@ -26,7 +26,7 @@ typedef struct {
 // Define the two modes of state machine that it will have
 typedef enum {
     Communication,
-    Data
+    Info
 } Mode;
 
 void changeState(StateMachine *machine, State state);
