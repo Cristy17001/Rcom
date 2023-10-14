@@ -24,7 +24,7 @@ void StateHandler(StateMachine *machine, unsigned char byteToProcess, unsigned c
             break;
         case A_RCV:
             if (byteToProcess == FLAG) {changeState(machine, FLAG_RCV); break;}
-            if (byteToProcess == SET || byteToProcess == UA || byteToProcess == RR || byteToProcess == REJ) {
+            if (byteToProcess == *machine->controlByte) {
                 changeState(machine, C_RCV);
                 frame[2] = byteToProcess;
             }

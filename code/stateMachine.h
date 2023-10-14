@@ -21,6 +21,7 @@ typedef enum {
 // Define the state machine structure
 typedef struct {
     State currentState;
+    unsigned char controlByte;
 } StateMachine;
 
 // Define the two modes of state machine that it will have

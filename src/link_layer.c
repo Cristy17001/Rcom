@@ -143,7 +143,7 @@ int llopen(LinkLayer connectionParameters) {
         // UA confirmation auxiliar variables
         unsigned char byte_received = 0;
         unsigned char UA_frame[BUF_SIZE] = {0};
-        StateMachine UA_stateMachine = {START};
+        StateMachine UA_stateMachine = {START, UA};
 
         // RETRANSMIT MECHANISM AND UA CONFIRMATION
         while (maxTries < connectionParameters.nRetransmissions) {
@@ -168,7 +168,7 @@ int llopen(LinkLayer connectionParameters) {
         // SET confirmation auxiliar variables
         unsigned char byte_received = 0;
         unsigned char SET_frame[BUF_SIZE] = {0};
-        StateMachine SET_stateMachine = {START};
+        StateMachine SET_stateMachine = {START, SET};
 
         // Waiting for SET confirmation
         read(fd, byte_received, 1);
@@ -232,18 +232,16 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
             alarmEnabled = TRUE;
         }
 
-        StateMachine RR_stateMachine = {START};
+        StateMachine RR_stateMachine = {START, RR};
         unsigned char* RR_frame = {0};
+        StateMachine REJ_stateMachine = {START, REJ};
+        unsigned char* REJ_frame = {0};
 
         // Waiting for RR confirmation
         read(fd, byte_received, 1);
         StateHandler(&RR_stateMachine, byte_received, RR_frame, Communication);
+        StateHandler(&REJ_stateMachine, byte_received, REJ_frame, Communication);
 
-
-
-        /////////////////////////////////////////////////////////////////////////////////////
-        // Confirmação ainda não está a functionar, aceitaria RR e REJ como se fossem iguais
-        /////////////////////////////////////////////////////////////////////////////////////
 
         // UA frame received and connection is now established
         if (RR_stateMachine.currentState == STOP) {
@@ -252,13 +250,19 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
             free(frame);
             return 0;
         }
+        else if (REJ_stateMachine.currentState == STOP) {
+            printf("Negative ACK frame received!\n");
+            free(stuffedBuf);
+            free(frame);
+            return 1;
+        }
     }
 
     // Free dynamically allocated memory
     free(stuffedBuf);
     free(frame);
 
-    return 0;
+    return 1;
 }
 
 ////////////////////////////////////////////////
