@@ -125,11 +125,12 @@ int llopen(LinkLayer connectionParameters) {
     }
     printf("Port configuration step done!\n");
 
+    // ALARM SETUP
+    (void)signal(SIGALRM, SendMainFrame);
+
     // Emissor
     if (connectionParameters.role == LlTx) {
-        // SET UP THE ALARM
         SetFrame(); // Place the set frame in the mainFrame
-        (void)signal(SIGALRM, SendMainFrame);
 
         // UA confirmation auxiliar variables
         unsigned char byte_received[1] = {0};
@@ -205,12 +206,10 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     for (int i = 0; i < newSize; i++) {
         mainFrame[i+4] = stuffedBuf[i];
     }
-    mainFrame[newSize+4] = BCC2;
+    mainFrame[newSize+4] = stuffedBuf[newSize+4];
     mainFrame[newSize+5] = FLAG;
     sizeMainFrame = newSize+5;
 
-    //ALARM SETUP
-    (void)signal(SIGALRM, SendMainFrame);
     alarmEnabled = FALSE;
     maxTries = 0;
 
