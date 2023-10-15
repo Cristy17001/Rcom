@@ -35,9 +35,11 @@ typedef struct
 // Maximum number of bytes that application layer should send to link layer
 #define MAX_PAYLOAD_SIZE 1000
 
+void restartAlarm();
 void SendMainFrame(int signal);
 void SetFrame();
-void UAFrame();
+void UAFrame(int address);
+void DiscFrame(int address);
 unsigned char PayloadBCC2(const unsigned char *buf, int bufSize);
 unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize);
 
@@ -56,6 +58,6 @@ int llread(unsigned char *packet);
 // Close previously opened connection.
 // if showStatistics == TRUE, link layer should print statistics in the console on close.
 // Return "1" on success or "-1" on error.
-int llclose(int showStatistics);
+int llclose(LinkLayer connectionParameters, int showStatistics);
 
 #endif // _LINK_LAYER_H_

@@ -15,6 +15,17 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     connection_parameters.nRetransmissions = nTries;
     connection_parameters.timeout = timeout;
 
-    llopen(connection_parameters);
+    // Establish connection with UA and SET
+    if (llopen(connection_parameters) != 0) {
+        printf("FAILED TO ESTABLISH CONNECTION!\n");
+        exit(1);
+    }
+
+
+    if (llclose(connection_parameters, 0) != 0) {
+        printf("FAILED TO TERMINATE CONNECTION!\n");
+        exit(1);
+    }
+    
 }
 

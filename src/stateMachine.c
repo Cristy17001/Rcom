@@ -16,7 +16,7 @@ void StateHandler(StateMachine *machine, unsigned char byteToProcess, unsigned c
             break;
         case FLAG_RCV:
             if (byteToProcess == FLAG) break;
-            if (byteToProcess == ADDRESS_1) {
+            if (byteToProcess == (machine->addressNumber == 1 ? ADDRESS_1 : ADDRESS_2)) {
                 changeState(machine, A_RCV);
                 frame[1] = byteToProcess;
             }

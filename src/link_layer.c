@@ -9,11 +9,15 @@
 // Global variables
 unsigned char mainFrame[MAX_PAYLOAD_SIZE];
 int sizeMainFrame = MAX_PAYLOAD_SIZE;
-
 int fd = 0;
 int maxTries = 0;
 int alarmEnabled = FALSE;
 
+
+void restartAlarm() {
+    maxTries = 0;
+    alarmEnabled = FALSE;
+}
 
 void SendMainFrame(int signal) {
     write(fd, mainFrame, sizeMainFrame);
@@ -32,11 +36,21 @@ void SetFrame() {
     sizeMainFrame = 5;
 }
 
-// Frame the SetFrame
-void UAFrame() {
+// Frame the UAFrame
+void UAFrame(int address) {
     mainFrame[0] = FLAG;
-    mainFrame[1] = ADDRESS_1;
+    mainFrame[1] = (address == 1 ? ADDRESS_1 : ADDRESS_2);
     mainFrame[2] = UA;
+    mainFrame[3] = mainFrame[1]^mainFrame[2];
+    mainFrame[4] = FLAG;
+    sizeMainFrame = 5;
+}
+
+// Frame the DiscFrame
+void DiscFrame(int address) {
+    mainFrame[0] = FLAG;
+    mainFrame[1] = (address == 1 ? ADDRESS_1 : ADDRESS_2);
+    mainFrame[2] = DISC;
     mainFrame[3] = mainFrame[1]^mainFrame[2];
     mainFrame[4] = FLAG;
     sizeMainFrame = 5;
@@ -135,7 +149,7 @@ int llopen(LinkLayer connectionParameters) {
         // UA confirmation auxiliar variables
         unsigned char byte_received[1] = {0};
         unsigned char UA_frame[BUF_SIZE] = {0};
-        StateMachine UA_stateMachine = {START, UA};
+        StateMachine UA_stateMachine = {START, UA, 1};
 
         // RETRANSMIT MECHANISM AND UA CONFIRMATION
         while (maxTries < connectionParameters.nRetransmissions) {
@@ -161,7 +175,7 @@ int llopen(LinkLayer connectionParameters) {
         // SET confirmation auxiliar variables
         unsigned char byte_received[1] = {0};
         unsigned char SET_frame[BUF_SIZE] = {0};
-        StateMachine SET_stateMachine = {START, SET};
+        StateMachine SET_stateMachine = {START, SET, 1};
         printf("Waiting to receive SET!\n");
 
         while (TRUE) {
@@ -175,7 +189,7 @@ int llopen(LinkLayer connectionParameters) {
             // SET frame received
             if (SET_stateMachine.currentState == STOP) {
                 printf("SET frame received!\n");
-                UAFrame();
+                UAFrame(1);
                 write(fd, mainFrame, sizeMainFrame);
                 printf("UA frame sent!\n");
                 return 0;
@@ -210,8 +224,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     mainFrame[newSize+5] = FLAG;
     sizeMainFrame = newSize+5;
 
-    alarmEnabled = FALSE;
-    maxTries = 0;
+    restartAlarm();
 
     unsigned char byte_received[1] = {0};
 
@@ -222,9 +235,9 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
             alarmEnabled = TRUE;
         }
 
-        StateMachine RR_stateMachine = {START, RR};
+        StateMachine RR_stateMachine = {START, RR, 1};
         unsigned char* RR_frame = {0};
-        StateMachine REJ_stateMachine = {START, REJ};
+        StateMachine REJ_stateMachine = {START, REJ, 1};
         unsigned char* REJ_frame = {0};
 
         // Waiting for RR confirmation
@@ -268,9 +281,70 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics)
-{
-    // TODO
+int llclose(LinkLayer connectionParameters, int showStatistics) {
+    unsigned char buf[BUF_SIZE] = {0};
+    unsigned char byte_received[1] = {0};
 
+    if (connectionParameters.role == LlTx) {
+        restartAlarm();
+        DiscFrame(1);
+        StateMachine DISC_stateMachine = {START, DISC, 2};
+        while (maxTries < connectionParameters.nRetransmissions) {
+            if (alarmEnabled == FALSE) {
+                alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+                printf("Sending DISC Frame!\n");
+                alarmEnabled = TRUE;
+            }
+            // Waiting for DISC confirmation
+            read(fd, &byte_received, 1);
+            StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
+
+            // DISC frame received, sending UA
+            if (DISC_stateMachine.currentState == STOP) {
+                printf("DISC frame received!\n");
+                printf("Sending UA frame!\n");
+
+                // Sending UA
+                UAFrame(2);
+                write(fd, mainFrame, sizeMainFrame);
+                return 0;
+            }
+        }
+    }
+    else if (connectionParameters.role == LlRx) {
+        StateMachine DISC_stateMachine = {START, DISC, 1};
+        StateMachine UA_stateMachine = {START, UA, 2};
+
+        while (TRUE) {
+            read(fd, &byte_received, 1);
+            StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
+
+            // DISC frame received, sending DISC
+            if (DISC_stateMachine.currentState == STOP) {
+                printf("DISC frame received!\n");
+                printf("Sending DISC frame!\n");
+                break;
+            }
+        }
+        
+        DiscFrame(2);
+        restartAlarm();
+        while (maxTries < connectionParameters.nRetransmissions) {
+            if (alarmEnabled == FALSE) {
+                alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+                printf("Sending DISC Frame!\n");
+                alarmEnabled = TRUE;
+            }
+            read(fd, &byte_received, 1);
+            StateHandler(&UA_stateMachine, byte_received[0], buf, Communication);
+
+            if (UA_stateMachine.currentState == STOP) {
+                printf("UA frame received!\n");
+                printf("Seizing all communication!\n");
+                return 0;
+            }
+        }
+    }
+    printf("Some error occurred seizing communication!\n");
     return 1;
 }
