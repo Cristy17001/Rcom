@@ -6,50 +6,40 @@
 #define _POSIX_SOURCE 1 // POSIX compliant source
 #define BUF_SIZE 5
 
-int alarmEnabled = FALSE;
-int maxTries = 0;
+// Global variables
+unsigned char mainFrame[MAX_PAYLOAD_SIZE];
+int sizeMainFrame = MAX_PAYLOAD_SIZE;
+
 int fd = 0;
+int maxTries = 0;
+int alarmEnabled = FALSE;
 
-// Alarm function handler's
-void SendSet(int signal, int fd) {
-    // Send Set
-    unsigned char SET_frame[BUF_SIZE] = {0};
-    SET_frame[0] = FLAG;
-    SET_frame[1] = ADDRESS_1;
-    SET_frame[2] = SET;
-    SET_frame[3] = SET_frame[1]^SET_frame[2];
-    SET_frame[4] = FLAG;
 
-    int bytes = write(fd, SET_frame, BUF_SIZE);
-    printf("Emissor just sent SET #%d!\n", maxTries);
-    printf("Waiting for UA confirmation!\n");  
-
+void SendMainFrame(int signal) {
+    write(fd, mainFrame, sizeMainFrame);
+    printf("Just sent mainFrame #%d!\n", maxTries);
     alarmEnabled = FALSE;
     maxTries++;
 }
 
-// Alarm function handler's
-void SendDataPacket(int signal, int fd, unsigned char* frame, int frameSize) {
-
-    int bytes = write(fd, frame, frameSize);
-    printf("Emissor trying to send DataPacket #%d!\n", maxTries);
-    printf("Waiting for UA confirmation!\n");  
-
-    alarmEnabled = FALSE;
-    maxTries++;
+// Frame the SetFrame
+void SetFrame() {
+    mainFrame[0] = FLAG;
+    mainFrame[1] = ADDRESS_1;
+    mainFrame[2] = SET;
+    mainFrame[3] = mainFrame[1]^mainFrame[2];
+    mainFrame[4] = FLAG;
+    sizeMainFrame = 5;
 }
 
-void SendUA(int fd) {
-    // Send UA
-    unsigned char UA_frame[BUF_SIZE] = {0};
-    UA_frame[0] = FLAG;
-    UA_frame[1] = ADDRESS_1;
-    UA_frame[2] = UA;
-    UA_frame[3] = UA_frame[1]^UA_frame[2];
-    UA_frame[4] = FLAG;
-
-    int bytes = write(fd, UA_frame, BUF_SIZE);
-    printf("Recepter just sent UA!\n");
+// Frame the SetFrame
+void UAFrame() {
+    mainFrame[0] = FLAG;
+    mainFrame[1] = ADDRESS_1;
+    mainFrame[2] = UA;
+    mainFrame[3] = mainFrame[1]^mainFrame[2];
+    mainFrame[4] = FLAG;
+    sizeMainFrame = 5;
 }
 
 unsigned char PayloadBCC2(const unsigned char *buf, int bufSize) {
@@ -89,7 +79,7 @@ unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize) {
         fprintf(stderr, "Memory reallocation failed.\n");
         exit(1);
     }
-    *newSize = stuffedBuf;
+    *newSize = stuffedIndex;
     
     return stuffedBuf;
 }
@@ -138,10 +128,11 @@ int llopen(LinkLayer connectionParameters) {
     // Emissor
     if (connectionParameters.role == LlTx) {
         // SET UP THE ALARM
-        (void)signal(SIGALRM, SendSet);
+        SetFrame(); // Place the set frame in the mainFrame
+        (void)signal(SIGALRM, SendMainFrame);
 
         // UA confirmation auxiliar variables
-        unsigned char byte_received = 0;
+        unsigned char byte_received[1] = {0};
         unsigned char UA_frame[BUF_SIZE] = {0};
         StateMachine UA_stateMachine = {START, UA};
 
@@ -149,11 +140,12 @@ int llopen(LinkLayer connectionParameters) {
         while (maxTries < connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+                printf("Sending Set Frame!\n");
                 alarmEnabled = TRUE;
             }
             // Waiting for UA confirmation
-            read(fd, byte_received, 1);
-            StateHandler(&UA_stateMachine, byte_received, UA_frame, Communication);
+            read(fd, &byte_received, 1);
+            StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
 
             // UA frame received and connection is now established
             if (UA_stateMachine.currentState == STOP) {
@@ -166,21 +158,29 @@ int llopen(LinkLayer connectionParameters) {
     // Role of the Receiver
     if (connectionParameters.role == LlRx) {
         // SET confirmation auxiliar variables
-        unsigned char byte_received = 0;
+        unsigned char byte_received[1] = {0};
         unsigned char SET_frame[BUF_SIZE] = {0};
         StateMachine SET_stateMachine = {START, SET};
+        printf("Waiting to receive SET!\n");
 
-        // Waiting for SET confirmation
-        read(fd, byte_received, 1);
-        StateHandler(&SET_stateMachine, byte_received, SET_frame, Communication);
+        while (TRUE) {
+            // Waiting for SET confirmation
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes > 0) {
+                printf("Received byte: 0x%x\n", byte_received[0]);
+            }
+            StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
-        // SET frame received
-        if (SET_stateMachine.currentState == STOP) {
-            printf("SET frame received!\n");
-            SendUA(fd);
-            printf("UA frame sent!\n");
-            return 0;
+            // SET frame received
+            if (SET_stateMachine.currentState == STOP) {
+                printf("SET frame received!\n");
+                UAFrame();
+                write(fd, mainFrame, sizeMainFrame);
+                printf("UA frame sent!\n");
+                return 0;
+            }
         }
+        
     }
 
     return 1;
@@ -197,33 +197,24 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     int newSize = 0;
     unsigned char* stuffedBuf = Stuffing(buf, bufSize, &newSize);
 
-    // Allocate memory for frame
-    unsigned char* frame = (unsigned char*)malloc((newSize + 6) * sizeof(unsigned char));
-    if (frame == NULL) {
-        fprintf(stderr, "Memory allocation failed.\n");
-        exit(1);
-    }
-
     // Populate frame
-    frame[0] = FLAG;
-    frame[1] = 0x01;
-    frame[2] = ADDRESS_1;
-    frame[3] = frame[1] ^ frame[2];
+    mainFrame[0] = FLAG;
+    mainFrame[1] = 0x01;
+    mainFrame[2] = ADDRESS_1;
+    mainFrame[3] = mainFrame[1] ^ mainFrame[2];
     for (int i = 0; i < newSize; i++) {
-        frame[i+4] = stuffedBuf[i];
+        mainFrame[i+4] = stuffedBuf[i];
     }
-    frame[newSize+4] = BCC2;
-    frame[newSize+5] = FLAG;
-
-
-    // Send the frame
+    mainFrame[newSize+4] = BCC2;
+    mainFrame[newSize+5] = FLAG;
+    sizeMainFrame = newSize+5;
 
     //ALARM SETUP
-    (void)signal(SIGALRM, SendDataPacket);
+    (void)signal(SIGALRM, SendMainFrame);
     alarmEnabled = FALSE;
     maxTries = 0;
 
-    unsigned char byte_received = 0;
+    unsigned char byte_received[1] = {0};
 
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
     while (maxTries < connectionParameters.nRetransmissions) {
@@ -238,29 +229,29 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
         unsigned char* REJ_frame = {0};
 
         // Waiting for RR confirmation
-        read(fd, byte_received, 1);
-        StateHandler(&RR_stateMachine, byte_received, RR_frame, Communication);
-        StateHandler(&REJ_stateMachine, byte_received, REJ_frame, Communication);
+        int n_byte = read(fd, &byte_received, 1);
+        if (n_byte > 0) {
+            printf("Received byte: 0x%x\n", byte_received[0]);
+        }
+
+        StateHandler(&RR_stateMachine, byte_received[0], RR_frame, Communication);
+        StateHandler(&REJ_stateMachine, byte_received[0], REJ_frame, Communication);
 
 
-        // UA frame received and connection is now established
         if (RR_stateMachine.currentState == STOP) {
             printf("Positive ACK frame received!\n");
             free(stuffedBuf);
-            free(frame);
             return 0;
         }
         else if (REJ_stateMachine.currentState == STOP) {
             printf("Negative ACK frame received!\n");
             free(stuffedBuf);
-            free(frame);
             return 1;
         }
     }
 
     // Free dynamically allocated memory
     free(stuffedBuf);
-    free(frame);
 
     return 1;
 }

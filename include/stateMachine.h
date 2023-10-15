@@ -1,6 +1,5 @@
 #include <stdio.h>
-#include "../src/macros.h"
-
+#include "global_macros.h"
 
 // Define states
 typedef enum {

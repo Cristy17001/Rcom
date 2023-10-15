@@ -5,9 +5,16 @@
 #define _LINK_LAYER_H_
 
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <termios.h>
+#include <unistd.h>
 #include <signal.h>
-#include "../code/stateMachine.h"
+#include "stateMachine.h"
+#include "global_macros.h"
 
 typedef enum
 {
@@ -28,18 +35,11 @@ typedef struct
 // Maximum number of bytes that application layer should send to link layer
 #define MAX_PAYLOAD_SIZE 1000
 
-// MISC
-#define FALSE 0
-#define TRUE 1
-
-#define FLAG 0x7E
-#define ADDRESS_1 0x03
-#define ADDRESS_2 0x01
-#define SET 0x03
-#define UA 0x07
-#define RR 0x05
-#define REJ 0x01
-
+void SendMainFrame(int signal);
+void SetFrame();
+void UAFrame();
+unsigned char PayloadBCC2(const unsigned char *buf, int bufSize);
+unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize);
 
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return "1" on success or "-1" on error.
