@@ -40,7 +40,7 @@ void SendMainFrame(int signal);
 void SetFrame();
 void UAFrame(int address);
 void DiscFrame(int address);
-unsigned char PayloadBCC2(const unsigned char *buf, int bufSize);
+int PayloadBCC2(const unsigned char *buf, int bufSize, unsigned char BCC2[2]);
 unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize);
 
 // Open a connection using the "port" parameters defined in struct linkLayer.

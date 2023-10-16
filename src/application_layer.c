@@ -21,6 +21,25 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         exit(1);
     }
 
+    if (connection_parameters.role == LlTx) {
+        unsigned char test_buffer[11] = {0};
+
+        for (int i = 0; i <= 9; i++) {
+            test_buffer[i] =  (0x07 + i);
+        }
+        test_buffer[10] = 0x7e;
+        llwrite(connection_parameters, test_buffer, 11);
+    }
+    else if (connection_parameters.role == LlRx) {
+        unsigned char DataFrame[MAX_PAYLOAD_SIZE];
+        if (llread(DataFrame) == -1) {
+            printf("Some Error has Ocurred READING OR SENDING THAT DATA!\n");
+        }
+        else {
+            printf("Correctly read the DATA!\n");
+        }
+    }
+
 
     if (llclose(connection_parameters, 0) != 0) {
         printf("FAILED TO TERMINATE CONNECTION!\n");

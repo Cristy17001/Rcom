@@ -21,7 +21,11 @@ void restartAlarm() {
 
 void SendMainFrame(int signal) {
     write(fd, mainFrame, sizeMainFrame);
-    printf("Just sent mainFrame #%d!\n", maxTries);
+    printf("Sent mainFrame #%d: \n", maxTries);
+    for (int i = 0; i < sizeMainFrame; i++) {
+        printf("0x%x ", mainFrame[i]);
+    }
+    printf("\n\n");
     alarmEnabled = FALSE;
     maxTries++;
 }
@@ -56,13 +60,26 @@ void DiscFrame(int address) {
     sizeMainFrame = 5;
 }
 
-unsigned char PayloadBCC2(const unsigned char *buf, int bufSize) {
+int PayloadBCC2(const unsigned char *buf, int bufSize, unsigned char BCC2[2]) {
     // Payload BCC2
-    unsigned char BCC2 = buf[0];
+    BCC2[0] = buf[0];
     for (int i = 1; i < bufSize; i++) {
-        BCC2 ^= buf[i];
+        BCC2[0] ^= buf[i];
     }
-    return BCC2;
+
+
+    // Stuffing BCC2 locally
+    if (BCC2[0] == 0x7e) {
+        BCC2[0] = 0x7d;
+        BCC2[1] = 0x5e;
+        
+    }
+    else if (BCC2[0] == 0x7d){
+        BCC2[0] = 0x7d;
+        BCC2[1] = 0x5d;
+    }
+    
+    return 0;
 }
 
 unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize) {
@@ -137,7 +154,7 @@ int llopen(LinkLayer connectionParameters) {
         perror("tcsetattr");
         exit(-1);
     }
-    printf("Port configuration step done!\n");
+    printf("\nPORT CONFIG DONE!\n\n");
 
     // ALARM SETUP
     (void)signal(SIGALRM, SendMainFrame);
@@ -164,7 +181,7 @@ int llopen(LinkLayer connectionParameters) {
 
             // UA frame received and connection is now established
             if (UA_stateMachine.currentState == STOP) {
-                printf("UA frame received!\n");
+                printf("UA frame received!\n\n");
                 return 0;
             }
         }
@@ -176,22 +193,22 @@ int llopen(LinkLayer connectionParameters) {
         unsigned char byte_received[1] = {0};
         unsigned char SET_frame[BUF_SIZE] = {0};
         StateMachine SET_stateMachine = {START, SET, 1};
-        printf("Waiting to receive SET!\n");
+        printf("WAITING SET FRAME!\n");
 
         while (TRUE) {
             // Waiting for SET confirmation
             int n_bytes = read(fd, &byte_received, 1);
             if (n_bytes > 0) {
-                printf("Received byte: 0x%x\n", byte_received[0]);
+                printf("0x%x \n", byte_received[0]);
             }
             StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
             // SET frame received
             if (SET_stateMachine.currentState == STOP) {
-                printf("SET frame received!\n");
+                printf("SET FRAME RECEIVED!\n");
                 UAFrame(1);
+                printf("SENDING UA FRAME!\n");
                 write(fd, mainFrame, sizeMainFrame);
-                printf("UA frame sent!\n");
                 return 0;
             }
         }
@@ -206,7 +223,8 @@ int llopen(LinkLayer connectionParameters) {
 ////////////////////////////////////////////////
 int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSize) {
     // Payload BCC2
-    unsigned char BCC2 = PayloadBCC2(buf, bufSize);
+    unsigned char BCC2[2] = {0};
+    PayloadBCC2(buf, bufSize, BCC2);
 
     // Stuffing
     int newSize = 0;
@@ -214,20 +232,29 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
     // Populate frame
     mainFrame[0] = FLAG;
-    mainFrame[1] = 0x01;
-    mainFrame[2] = ADDRESS_1;
+    mainFrame[1] = ADDRESS_1;
+    mainFrame[2] = 0;
     mainFrame[3] = mainFrame[1] ^ mainFrame[2];
     for (int i = 0; i < newSize; i++) {
         mainFrame[i+4] = stuffedBuf[i];
     }
-    mainFrame[newSize+4] = stuffedBuf[newSize+4];
-    mainFrame[newSize+5] = FLAG;
-    sizeMainFrame = newSize+5;
+    mainFrame[newSize+4] = BCC2[0];
+    if (BCC2[1] == 0x5e || BCC2[1] == 0x5d) {
+        mainFrame[newSize+5] = BCC2[1];
+        mainFrame[newSize+6] = FLAG;
+        sizeMainFrame = newSize+7;
+    }
+    else {
+        mainFrame[newSize+5] = FLAG;
+        sizeMainFrame = newSize+6;
+    }
+
 
     restartAlarm();
 
     unsigned char byte_received[1] = {0};
 
+    printf("WAITING CONFIRMATION OR REJECTION!\n");
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
     while (maxTries < connectionParameters.nRetransmissions) {
         if (alarmEnabled == FALSE) {
@@ -271,11 +298,75 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
-    // TODO
+int llread(unsigned char *packet) {
+    StateMachine dataMachine = {START, 0, 1};
+    unsigned char byte_received[1] = {0};
+    unsigned char dataFrame[MAX_PAYLOAD_SIZE * 2] = {0}; 
+    int frame_index = 0;
+    
+    // Process the data received until correct frame structure works
+    while (dataMachine.currentState != STOP) {
+        read(fd, &byte_received, 1);
 
-    return 0;
+        // Process the data received and return the index of the current frame
+        frame_index = StateHandler(&dataMachine, byte_received[0], dataFrame, Data);
+    }
+
+    printf("DATA PACKET RECEIVED: \n");
+    for (int i = 0; i <= frame_index; i++) {
+        printf("0x%x ", dataFrame[i]);
+    }
+    printf("\n\n");
+
+    unsigned char *dataDestuffed = (unsigned char *)malloc(MAX_PAYLOAD_SIZE * 2 * sizeof(unsigned char));
+
+    // Destuffing of the DATA and BBC2
+    int dD_index = 0; // Data destuffed index
+    int skip_index = 0; // Used to skip character for the special cases
+    while (skip_index < frame_index-4) {
+        if (dataFrame[skip_index+4] == 0x7d) {
+            if (dataFrame[skip_index+5] == 0x5e) {
+                dataDestuffed[dD_index] = 0x7e;
+                skip_index += 2;
+                dD_index++;
+                continue;
+            }
+            else if (dataFrame[skip_index+5] == 0x5d) {
+                dataDestuffed[dD_index] = 0x7d;
+                skip_index += 2;
+                dD_index++;
+                continue;
+            }
+        }
+        dataDestuffed[dD_index] = dataFrame[skip_index+4];
+        skip_index++;
+        dD_index++;
+    }
+
+    printf("Data Destuffed: \n");
+    for (int i = 0; i < dD_index; i++) {
+        printf("0x%x ", dataDestuffed[i]);
+    }
+    printf("\n\n");
+
+    // Verify BCC2 validaty
+    unsigned char checkBCC2 = dataDestuffed[0];
+    for (int i = 1; i < dD_index-1; i++) {
+        printf("0x%02x XOR 0x%02x = ", checkBCC2, dataDestuffed[i]);
+        checkBCC2 ^= dataDestuffed[i];
+        printf("0x%02x\n", checkBCC2);
+    }
+
+    printf("\ndD_index: %d\n", dD_index);
+    printf("0x%02x\n", dataDestuffed[dD_index-1]);
+    printf("0x%02x\n", checkBCC2);
+    // VALID BCC2
+    if (dataDestuffed[dD_index-1] == checkBCC2) {
+        packet = realloc(dataDestuffed, dD_index * sizeof(unsigned char));
+        return dD_index;
+    }
+    
+    return -1;
 }
 
 ////////////////////////////////////////////////
