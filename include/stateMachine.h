@@ -22,6 +22,7 @@ typedef struct {
     State currentState;
     unsigned char controlByte;
     int addressNumber;
+    int frameSize;
 } StateMachine;
 
 // Define the two modes of state machine that it will have
@@ -31,4 +32,4 @@ typedef enum {
 } Mode;
 
 void changeState(StateMachine *machine, State state);
-int StateHandler(StateMachine *machine, unsigned char byteToProcess, unsigned char* frame, Mode mode);
+void StateHandler(StateMachine *machine, unsigned char byteToProcess, unsigned char* frame, Mode mode);

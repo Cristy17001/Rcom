@@ -21,7 +21,7 @@ void restartAlarm() {
 
 void SendMainFrame(int signal) {
     write(fd, mainFrame, sizeMainFrame);
-    printf("Sent mainFrame #%d: \n", maxTries);
+    printf("Sent mainFrame #%d: ", maxTries);
     for (int i = 0; i < sizeMainFrame; i++) {
         printf("0x%x ", mainFrame[i]);
     }
@@ -58,6 +58,22 @@ void DiscFrame(int address) {
     mainFrame[3] = mainFrame[1]^mainFrame[2];
     mainFrame[4] = FLAG;
     sizeMainFrame = 5;
+}
+
+// Frame the RR and REJ with the control
+void DataResponseFrame(unsigned char control) {
+    mainFrame[0] = FLAG;
+    mainFrame[1] = ADDRESS_1;
+    mainFrame[2] = control;
+    mainFrame[3] = mainFrame[1]^mainFrame[2];
+    mainFrame[4] = FLAG;
+    sizeMainFrame = 5;
+}
+
+void copyDataFrame(unsigned char* source, unsigned char* destination, int size) {
+    for (int i = 0; i < size; i++) {
+        destination[i] = source[i];
+    }
 }
 
 int PayloadBCC2(const unsigned char *buf, int bufSize, unsigned char BCC2[2]) {
@@ -172,7 +188,7 @@ int llopen(LinkLayer connectionParameters) {
         while (maxTries < connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
-                printf("Sending Set Frame!\n");
+                printf("SENDING SET FRAME!\n");
                 alarmEnabled = TRUE;
             }
             // Waiting for UA confirmation
@@ -181,7 +197,8 @@ int llopen(LinkLayer connectionParameters) {
 
             // UA frame received and connection is now established
             if (UA_stateMachine.currentState == STOP) {
-                printf("UA frame received!\n\n");
+                printf("UA FRAME RECEIVED!\n");
+                printf("CONNECTION ESTABLISHED!\n\n");
                 return 0;
             }
         }
@@ -197,10 +214,7 @@ int llopen(LinkLayer connectionParameters) {
 
         while (TRUE) {
             // Waiting for SET confirmation
-            int n_bytes = read(fd, &byte_received, 1);
-            if (n_bytes > 0) {
-                printf("0x%x \n", byte_received[0]);
-            }
+            read(fd, &byte_received, 1);
             StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
             // SET frame received
@@ -233,7 +247,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     // Populate frame
     mainFrame[0] = FLAG;
     mainFrame[1] = ADDRESS_1;
-    mainFrame[2] = 0;
+    mainFrame[2] = INFO0;
     mainFrame[3] = mainFrame[1] ^ mainFrame[2];
     for (int i = 0; i < newSize; i++) {
         mainFrame[i+4] = stuffedBuf[i];
@@ -251,10 +265,18 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
 
     restartAlarm();
-
     unsigned char byte_received[1] = {0};
 
     printf("WAITING CONFIRMATION OR REJECTION!\n");
+    StateMachine RR0_stateMachine = {START, RR0, 1};
+    StateMachine RR1_stateMachine = {START, RR1, 1};
+    unsigned char RR0_frame[BUF_SIZE] = {0};
+    unsigned char RR1_frame[BUF_SIZE] = {0};
+    StateMachine REJ0_stateMachine = {START, REJ0, 1};
+    StateMachine REJ1_stateMachine = {START, REJ1, 1};
+    unsigned char REJ0_frame[BUF_SIZE] = {0};
+    unsigned char REJ1_frame[BUF_SIZE] = {0};
+
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
     while (maxTries < connectionParameters.nRetransmissions) {
         if (alarmEnabled == FALSE) {
@@ -262,10 +284,6 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
             alarmEnabled = TRUE;
         }
 
-        StateMachine RR_stateMachine = {START, RR, 1};
-        unsigned char* RR_frame = {0};
-        StateMachine REJ_stateMachine = {START, REJ, 1};
-        unsigned char* REJ_frame = {0};
 
         // Waiting for RR confirmation
         int n_byte = read(fd, &byte_received, 1);
@@ -273,17 +291,28 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
             printf("Received byte: 0x%x\n", byte_received[0]);
         }
 
-        StateHandler(&RR_stateMachine, byte_received[0], RR_frame, Communication);
-        StateHandler(&REJ_stateMachine, byte_received[0], REJ_frame, Communication);
+        StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
+        StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
+        StateHandler(&REJ0_stateMachine, byte_received[0], REJ0_frame, Communication);
+        StateHandler(&REJ1_stateMachine, byte_received[0], REJ1_frame, Communication);
 
-
-        if (RR_stateMachine.currentState == STOP) {
-            printf("Positive ACK frame received!\n");
+        if (RR0_stateMachine.currentState == STOP) {
+            printf("Positive ACK %d frame received!\n", 0);
             free(stuffedBuf);
             return 0;
         }
-        else if (REJ_stateMachine.currentState == STOP) {
-            printf("Negative ACK frame received!\n");
+        else if (RR1_stateMachine.currentState == STOP) {
+            printf("Positive ACK %d frame received!\n", 1);
+            free(stuffedBuf);
+            return 0;
+        }
+        else if (REJ0_stateMachine.currentState == STOP) {
+            printf("Negative ACK %d frame received!\n", 0);
+            free(stuffedBuf);
+            return 1;
+        }
+        else if (REJ1_stateMachine.currentState == STOP) {
+            printf("Negative ACK %d frame received!\n", 1);
             free(stuffedBuf);
             return 1;
         }
@@ -299,17 +328,42 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 // LLREAD
 ////////////////////////////////////////////////
 int llread(unsigned char *packet) {
-    StateMachine dataMachine = {START, 0, 1};
-    unsigned char byte_received[1] = {0};
-    unsigned char dataFrame[MAX_PAYLOAD_SIZE * 2] = {0}; 
+    StateMachine info0_StateMachine = {START, INFO0, 1};
+    StateMachine info1_StateMachine = {START, INFO1, 1};
+    unsigned char dataFrame0[MAX_PAYLOAD_SIZE * 2] = {0}; 
+    unsigned char dataFrame1[MAX_PAYLOAD_SIZE * 2] = {0}; 
+    unsigned char dataFrame[MAX_PAYLOAD_SIZE * 2] = {0};
     int frame_index = 0;
-    
+
+    unsigned char byte_received[1] = {0};
+    int infoNumber = -1;
+
+
     // Process the data received until correct frame structure works
-    while (dataMachine.currentState != STOP) {
+    while (TRUE) {
         read(fd, &byte_received, 1);
 
         // Process the data received and return the index of the current frame
-        frame_index = StateHandler(&dataMachine, byte_received[0], dataFrame, Data);
+        StateHandler(&info0_StateMachine, byte_received[0], dataFrame0, Data);
+        StateHandler(&info1_StateMachine, byte_received[0], dataFrame1, Data);
+
+        if (info0_StateMachine.currentState == STOP) {
+            infoNumber = 0;
+            break;
+        }
+        else if (info1_StateMachine.currentState == STOP) {
+            infoNumber = 1;
+            break;
+        }
+    }
+
+    if (infoNumber == 0) {
+        frame_index = info0_StateMachine.frameSize; 
+        copyDataFrame(dataFrame0, dataFrame, frame_index);
+    }
+    if (infoNumber == 1) {
+        frame_index = info1_StateMachine.frameSize; 
+        copyDataFrame(dataFrame1, dataFrame, frame_index);
     }
 
     printf("DATA PACKET RECEIVED: \n");
@@ -351,6 +405,7 @@ int llread(unsigned char *packet) {
 
     // Verify BCC2 validaty
     unsigned char checkBCC2 = dataDestuffed[0];
+    printf("CALCULATING BCC2: \n");
     for (int i = 1; i < dD_index-1; i++) {
         printf("0x%02x XOR 0x%02x = ", checkBCC2, dataDestuffed[i]);
         checkBCC2 ^= dataDestuffed[i];
@@ -358,14 +413,24 @@ int llread(unsigned char *packet) {
     }
 
     printf("\ndD_index: %d\n", dD_index);
-    printf("0x%02x\n", dataDestuffed[dD_index-1]);
-    printf("0x%02x\n", checkBCC2);
+    printf("\nInfo Number: %d\n", infoNumber);
+    printf("BCC2 FROM DATA: 0x%02x\n", dataDestuffed[dD_index-1]);
+    printf("BCC2 CALCULATED: 0x%02x\n", checkBCC2);
+    
     // VALID BCC2
     if (dataDestuffed[dD_index-1] == checkBCC2) {
+        if (infoNumber == 0) {DataResponseFrame(RR0);}
+        else if (infoNumber == 1) {DataResponseFrame(RR1);}
+        write(fd, mainFrame, sizeMainFrame);
+
         packet = realloc(dataDestuffed, dD_index * sizeof(unsigned char));
         return dD_index;
     }
-    
+    else {
+        if (infoNumber == 0) {DataResponseFrame(REJ0);}
+        else if (infoNumber == 1) {DataResponseFrame(REJ1);}
+        write(fd, mainFrame, sizeMainFrame);
+    }
     return -1;
 }
 

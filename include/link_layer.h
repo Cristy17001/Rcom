@@ -40,6 +40,8 @@ void SendMainFrame(int signal);
 void SetFrame();
 void UAFrame(int address);
 void DiscFrame(int address);
+void DataResponseFrame(unsigned char control);
+void copyDataFrame(unsigned char* source, unsigned char* destination, int size);
 int PayloadBCC2(const unsigned char *buf, int bufSize, unsigned char BCC2[2]);
 unsigned char* Stuffing(const unsigned char *buf, int bufSize, int* newSize);
 
