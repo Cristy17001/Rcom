@@ -17,5 +17,8 @@
 #define REJ1 0x81
 #define INFO0 0x00
 #define INFO1 0x40
+#define DATA_CTRL 0x01
+#define START_CTRL 0x02
+#define END_CTRL 0x03
 
 #endif // GLOBAL_MACROS_H

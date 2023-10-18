@@ -18,4 +18,6 @@
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename);
 
+void buildControlFrame(const long int file_size, unsigned char* name, unsigned char name_size, unsigned char* frame, int isStart);
+
 #endif // _APPLICATION_LAYER_H_

@@ -61,3 +61,23 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     
 }
 
+void buildControlFrame(const long int file_size, unsigned char* name, unsigned char name_size, unsigned char* frame, int isStart) {
+    long int file_size_aux = file_size;    
+    int offset = 0;
+    frame[0] = (isStart ? START_CTRL : END_CTRL); // IS IT THE START CONTROL OR THE LAST CONTROL ? 
+    frame[1] = 0; // SIZE OF THE FILE
+    frame[2] = sizeof(file_size);  // Nº BYTES TO REPRESENT THE FILE_SIZE
+
+    while (offset < frame[2]) {
+        frame[3+offset] = (file_size_aux & 0xFF);
+        file_size_aux = (file_size_aux >> 8); 
+        offset++;
+    }
+    offset += 4;
+    frame[offset++] = 1; // NAME OF THE FILE
+    frame[offset++] = sizeof(name_size); // Nº BYTES TO REPRESENT THE FILE_NAME
+    while (offset < frame[offset-1]) {
+        frame[offset++] = (file_size_aux & 0xFF);
+        file_size_aux = (file_size_aux >> 8); 
+    }
+}
