@@ -13,6 +13,14 @@ int fd = 0;
 int maxTries = 0;
 int alarmEnabled = FALSE;
 
+// Variables to control repetition of frames
+
+// The control that the receiver is expecting
+int receiver_control = 0;
+
+// The control that the Tx is sending
+int transmissor_control = 0;
+
 
 void restartAlarm() {
     maxTries = 0;
@@ -247,7 +255,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     // Populate frame
     mainFrame[0] = FLAG;
     mainFrame[1] = ADDRESS_1;
-    mainFrame[2] = INFO0;
+    mainFrame[2] = (transmissor_control == 1 ? INFO1 : INFO0);
     mainFrame[3] = mainFrame[1] ^ mainFrame[2];
     for (int i = 0; i < newSize; i++) {
         mainFrame[i+4] = stuffedBuf[i];
@@ -295,27 +303,57 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
         StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
         StateHandler(&REJ0_stateMachine, byte_received[0], REJ0_frame, Communication);
         StateHandler(&REJ1_stateMachine, byte_received[0], REJ1_frame, Communication);
+        
 
-        if (RR0_stateMachine.currentState == STOP) {
-            printf("Positive ACK %d frame received!\n", 0);
-            free(stuffedBuf);
-            return 0;
+        if (transmissor_control == 0) {
+            if (RR0_stateMachine.currentState == STOP) {
+                printf("Positive ACK %d frame received, REPETITION DETECTED!\n", 0);
+                RR0_stateMachine.currentState = START;
+                restartAlarm();
+            }   
+            else if (RR1_stateMachine.currentState == STOP) {
+                printf("Positive ACK %d frame received, FRAME CORRECTLY SENT!\n", 1);
+                transmissor_control = 1;
+                free(stuffedBuf);
+                return 0;
+            }
+            else if (REJ0_stateMachine.currentState == STOP) {
+                printf("Negative ACK %d frame received, REPETITION DETECTED!\n", 0);
+                REJ0_stateMachine.currentState = START;
+                restartAlarm();
+            }
+            else if (REJ1_stateMachine.currentState == STOP) {
+                printf("Negative ACK %d frame received, FRAME BCC2 DIDN'T MATCH!\n", 1);
+                REJ1_stateMachine.currentState = START;
+                restartAlarm();
+            }
         }
-        else if (RR1_stateMachine.currentState == STOP) {
-            printf("Positive ACK %d frame received!\n", 1);
-            free(stuffedBuf);
-            return 0;
+        else if (transmissor_control == 1)  {
+            if (RR0_stateMachine.currentState == STOP) {
+                printf("Positive ACK %d frame received, FRAME CORRECTLY SENT!\n", 0);
+                transmissor_control = 0;
+                free(stuffedBuf);
+                return 0;
+
+            }
+            else if (RR1_stateMachine.currentState == STOP) {
+                printf("Positive ACK %d frame received, REPETITION DETECTED!\n", 1);
+                RR1_stateMachine.currentState = START;
+                restartAlarm();
+            }
+            else if (REJ0_stateMachine.currentState == STOP) {
+                printf("Negative ACK %d frame received, FRAME BCC2 DIDN'T MATCH!\n", 0);
+                REJ0_stateMachine.currentState = START;
+                restartAlarm();
+            }
+            else if (REJ1_stateMachine.currentState == STOP) {
+                printf("Negative ACK %d frame received, REPETITION DETECTED!\n", 1);
+                REJ1_stateMachine.currentState = START;
+                restartAlarm();
+            }
         }
-        else if (REJ0_stateMachine.currentState == STOP) {
-            printf("Negative ACK %d frame received!\n", 0);
-            free(stuffedBuf);
-            return 1;
-        }
-        else if (REJ1_stateMachine.currentState == STOP) {
-            printf("Negative ACK %d frame received!\n", 1);
-            free(stuffedBuf);
-            return 1;
-        }
+
+
     }
 
     // Free dynamically allocated memory
@@ -372,7 +410,7 @@ int llread(unsigned char *packet) {
     }
     printf("\n\n");
 
-    unsigned char *dataDestuffed = (unsigned char *)malloc(MAX_PAYLOAD_SIZE * 2 * sizeof(unsigned char));
+    unsigned char *dataDestuffed = (unsigned char *)malloc(MAX_PAYLOAD_SIZE * 2);
 
     // Destuffing of the DATA and BBC2
     int dD_index = 0; // Data destuffed index
@@ -419,17 +457,28 @@ int llread(unsigned char *packet) {
     
     // VALID BCC2
     if (dataDestuffed[dD_index-1] == checkBCC2) {
-        if (infoNumber == 0) {DataResponseFrame(RR0);}
-        else if (infoNumber == 1) {DataResponseFrame(RR1);}
+        if (infoNumber == 0) {DataResponseFrame(RR1);}
+        else if (infoNumber == 1) {DataResponseFrame(RR0);}
         write(fd, mainFrame, sizeMainFrame);
 
-        packet = realloc(dataDestuffed, dD_index * sizeof(unsigned char));
-        return dD_index;
+        packet = realloc(dataDestuffed, dD_index);
+        
+        // IF equal to the one that was expected to receive
+        if (infoNumber == receiver_control) {
+            receiver_control = !receiver_control;
+            printf("%d\n", receiver_control);
+            return dD_index;
+        }
+        // ELSE RETURN -1, MEANING PACKET WAS REPEATED, NOT TO BE SAVED
+        return -1;
     }
     else {
-        if (infoNumber == 0) {DataResponseFrame(REJ0);}
-        else if (infoNumber == 1) {DataResponseFrame(REJ1);}
+        if (infoNumber == 0) {DataResponseFrame(REJ1);}
+        else if (infoNumber == 1) {DataResponseFrame(REJ0);}
         write(fd, mainFrame, sizeMainFrame);
+
+        // RETURN -1, MEANING PACKET SHOULD'T BE SAVED
+        return -1;
     }
     return -1;
 }

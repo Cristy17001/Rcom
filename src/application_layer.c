@@ -29,17 +29,30 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         }
         test_buffer[10] = 0x7e;
         llwrite(connection_parameters, test_buffer, 11);
+        llwrite(connection_parameters, test_buffer, 11);
+
+        for (int i = 0; i <= 10; i++) {
+            test_buffer[i] =  (0x02 + i);
+        }
+        llwrite(connection_parameters, test_buffer, 11);
     }
     else if (connection_parameters.role == LlRx) {
         unsigned char DataFrame[MAX_PAYLOAD_SIZE];
-        if (llread(DataFrame) == -1) {
-            printf("Some Error has Ocurred READING OR SENDING THAT DATA!\n");
-        }
-        else {
-            printf("Correctly read the DATA!\n");
-        }
-    }
+        int counter = 0;
 
+        while (counter != 3) {
+            int response = llread(DataFrame);
+
+            if (response == -1) {
+                printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n");
+            }
+            else if (response >= 0) {
+                printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n");
+            }
+            counter++;
+        }
+        
+    }
 
     if (llclose(connection_parameters, 0) != 0) {
         printf("FAILED TO TERMINATE CONNECTION!\n");
