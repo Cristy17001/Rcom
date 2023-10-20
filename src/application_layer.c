@@ -22,7 +22,21 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     if (connection_parameters.role == LlTx) {
-        unsigned char test_buffer[11] = {0};
+        unsigned char testControl[500] = {30};
+        unsigned char name[] = "penguin.gif";
+
+
+        // START CONTROL PACKET
+        int n_bytes = buildControlFrame(5000, name, 12, testControl, TRUE);
+        llwrite(connection_parameters, testControl, n_bytes);
+
+        // END CONTROL PACKET
+        n_bytes = buildControlFrame(5000, name, 12, testControl, FALSE);
+        llwrite(connection_parameters, testControl, n_bytes);
+
+
+
+        /*unsigned char test_buffer[11] = {0};
 
         for (int i = 0; i <= 9; i++) {
             test_buffer[i] =  (0x07 + i);
@@ -35,13 +49,16 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             test_buffer[i] =  (0x02 + i);
         }
         llwrite(connection_parameters, test_buffer, 11);
+        */
     }
     else if (connection_parameters.role == LlRx) {
-        unsigned char DataFrame[MAX_PAYLOAD_SIZE];
-        int counter = 0;
+        unsigned char receivedData[MAX_PAYLOAD_SIZE*2];
+        int responseCounter = 0;
+        int response = 0;
 
-        while (counter != 3) {
-            int response = llread(DataFrame);
+        while (receivedData[0] != END_CTRL) {            
+            response = llread(receivedData);
+            printf("DATA 0: 0x%0x\n", receivedData[0]);
 
             if (response == -1) {
                 printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n");
@@ -49,9 +66,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             else if (response >= 0) {
                 printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n");
             }
-            counter++;
+            responseCounter++;
         }
-        
     }
 
     if (llclose(connection_parameters, 0) != 0) {
@@ -61,23 +77,27 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     
 }
 
-void buildControlFrame(const long int file_size, unsigned char* name, unsigned char name_size, unsigned char* frame, int isStart) {
+int buildControlFrame(const long int file_size, unsigned char* name, unsigned char name_size, unsigned char* frame, int isStart) {
     long int file_size_aux = file_size;    
     int offset = 0;
-    frame[0] = (isStart ? START_CTRL : END_CTRL); // IS IT THE START CONTROL OR THE LAST CONTROL ? 
-    frame[1] = 0; // SIZE OF THE FILE
-    frame[2] = sizeof(file_size);  // Nº BYTES TO REPRESENT THE FILE_SIZE
+    int counter_number_size = 0;
 
-    while (offset < frame[2]) {
-        frame[3+offset] = (file_size_aux & 0xFF);
-        file_size_aux = (file_size_aux >> 8); 
-        offset++;
-    }
-    offset += 4;
-    frame[offset++] = 1; // NAME OF THE FILE
-    frame[offset++] = sizeof(name_size); // Nº BYTES TO REPRESENT THE FILE_NAME
-    while (offset < frame[offset-1]) {
+    frame[offset++] = (isStart ? START_CTRL : END_CTRL); // IS IT THE START CONTROL OR THE LAST CONTROL ? 
+    frame[offset++] = 0; // SIZE OF THE FILE
+    offset++;
+    while (file_size_aux != 0) {
         frame[offset++] = (file_size_aux & 0xFF);
         file_size_aux = (file_size_aux >> 8); 
+        counter_number_size++;
     }
+    frame[2] = counter_number_size;  // Nº BYTES TO REPRESENT THE FILE_SIZE
+    
+    frame[offset++] = 1; // NAME OF THE FILE
+    frame[offset++] = name_size; // Nº BYTES TO REPRESENT THE FILE_NAME
+    
+    for(int i = 0; i < name_size; i++) {
+        frame[offset++] = name[i];
+    }
+
+    return offset-1; // Return the number of bytes written in the frame
 }

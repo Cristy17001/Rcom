@@ -165,10 +165,12 @@ int llopen(LinkLayer connectionParameters) {
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
 
+
+    // SETUP SO THAT IT WAITS TIME * 0.1 or receives one byte
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 1;  // Blocking read until 1 chars received
+    newtio.c_cc[VTIME] = 10; // Inter-character timer unused
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 1 chars received
 
     // TCIFLUSH - flushes data received but not read.
     tcflush(fd, TCIOFLUSH);
@@ -202,6 +204,7 @@ int llopen(LinkLayer connectionParameters) {
             // Waiting for UA confirmation
             read(fd, &byte_received, 1);
             StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
+            printf("0x%0x\n", byte_received[0]);
 
             // UA frame received and connection is now established
             if (UA_stateMachine.currentState == STOP) {
@@ -223,6 +226,7 @@ int llopen(LinkLayer connectionParameters) {
         while (TRUE) {
             // Waiting for SET confirmation
             read(fd, &byte_received, 1);
+            printf("0x%0x\n", byte_received[0]);
             StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
             // SET frame received
@@ -410,58 +414,54 @@ int llread(unsigned char *packet) {
     }
     printf("\n\n");
 
-    unsigned char *dataDestuffed = (unsigned char *)malloc(MAX_PAYLOAD_SIZE * 2);
-
     // Destuffing of the DATA and BBC2
     int dD_index = 0; // Data destuffed index
     int skip_index = 0; // Used to skip character for the special cases
     while (skip_index < frame_index-4) {
         if (dataFrame[skip_index+4] == 0x7d) {
             if (dataFrame[skip_index+5] == 0x5e) {
-                dataDestuffed[dD_index] = 0x7e;
+                packet[dD_index] = 0x7e;
                 skip_index += 2;
                 dD_index++;
                 continue;
             }
             else if (dataFrame[skip_index+5] == 0x5d) {
-                dataDestuffed[dD_index] = 0x7d;
+                packet[dD_index] = 0x7d;
                 skip_index += 2;
                 dD_index++;
                 continue;
             }
         }
-        dataDestuffed[dD_index] = dataFrame[skip_index+4];
+        packet[dD_index] = dataFrame[skip_index+4];
         skip_index++;
         dD_index++;
     }
 
     printf("Data Destuffed: \n");
     for (int i = 0; i < dD_index; i++) {
-        printf("0x%x ", dataDestuffed[i]);
+        printf("0x%x ", packet[i]);
     }
     printf("\n\n");
 
     // Verify BCC2 validaty
-    unsigned char checkBCC2 = dataDestuffed[0];
+    unsigned char checkBCC2 = packet[0];
     printf("CALCULATING BCC2: \n");
     for (int i = 1; i < dD_index-1; i++) {
-        printf("0x%02x XOR 0x%02x = ", checkBCC2, dataDestuffed[i]);
-        checkBCC2 ^= dataDestuffed[i];
+        printf("0x%02x XOR 0x%02x = ", checkBCC2, packet[i]);
+        checkBCC2 ^= packet[i];
         printf("0x%02x\n", checkBCC2);
     }
 
     printf("\ndD_index: %d\n", dD_index);
     printf("\nInfo Number: %d\n", infoNumber);
-    printf("BCC2 FROM DATA: 0x%02x\n", dataDestuffed[dD_index-1]);
+    printf("BCC2 FROM DATA: 0x%02x\n", packet[dD_index-1]);
     printf("BCC2 CALCULATED: 0x%02x\n", checkBCC2);
     
     // VALID BCC2
-    if (dataDestuffed[dD_index-1] == checkBCC2) {
+    if (packet[dD_index-1] == checkBCC2) {
         if (infoNumber == 0) {DataResponseFrame(RR1);}
         else if (infoNumber == 1) {DataResponseFrame(RR0);}
         write(fd, mainFrame, sizeMainFrame);
-
-        packet = realloc(dataDestuffed, dD_index);
         
         // IF equal to the one that was expected to receive
         if (infoNumber == receiver_control) {
