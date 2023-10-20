@@ -22,16 +22,14 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     if (connection_parameters.role == LlTx) {
-        unsigned char testControl[500] = {30};
-        unsigned char name[] = "penguin.gif";
-
+        unsigned char testControl[MAX_PAYLOAD_SIZE] = {0};
 
         // START CONTROL PACKET
-        int n_bytes = buildControlFrame(5000, name, 12, testControl, TRUE);
+        int n_bytes = buildControlFrame(5000, filename, 12, testControl, TRUE);
         llwrite(connection_parameters, testControl, n_bytes);
 
         // END CONTROL PACKET
-        n_bytes = buildControlFrame(5000, name, 12, testControl, FALSE);
+        n_bytes = buildControlFrame(5000, filename, 12, testControl, FALSE);
         llwrite(connection_parameters, testControl, n_bytes);
 
 
@@ -77,7 +75,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     
 }
 
-int buildControlFrame(const long int file_size, unsigned char* name, unsigned char name_size, unsigned char* frame, int isStart) {
+int buildControlPacket(const long int file_size, const char *filename, unsigned char name_size, unsigned char* frame, int isStart) {
     long int file_size_aux = file_size;    
     int offset = 0;
     int counter_number_size = 0;
@@ -96,8 +94,17 @@ int buildControlFrame(const long int file_size, unsigned char* name, unsigned ch
     frame[offset++] = name_size; // Nº BYTES TO REPRESENT THE FILE_NAME
     
     for(int i = 0; i < name_size; i++) {
-        frame[offset++] = name[i];
+        frame[offset++] = filename[i];
     }
 
     return offset-1; // Return the number of bytes written in the frame
+}
+
+void buildDataPacket(short nDataBytes, unsigned char* packet, unsigned char* data) {
+    packet[0] = DATA_CTRL;
+    packet[1] = ((nDataBytes >> 8) & 0xf);
+    packet[2] = nDataBytes & 0xf;
+    for (int i = 0; i < nDataBytes; i++) {
+        packet[3+i] = data[i]; 
+    }
 }

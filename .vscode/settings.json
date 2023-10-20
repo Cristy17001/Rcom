@@ -3,6 +3,7 @@
     "files.associations": {
         "link_layer.h": "c",
         "string.h": "c",
-        "application_layer.h": "c"
+        "application_layer.h": "c",
+        "typeinfo": "c"
     }
 }
