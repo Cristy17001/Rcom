@@ -29,11 +29,7 @@ void restartAlarm() {
 
 void SendMainFrame(int signal) {
     write(fd, mainFrame, sizeMainFrame);
-    printf("Sent mainFrame #%d: ", maxTries);
-    for (int i = 0; i < sizeMainFrame; i++) {
-        printf("0x%x ", mainFrame[i]);
-    }
-    printf("\n\n");
+    printf("Sent mainFrame #%d: \n", maxTries);
     alarmEnabled = FALSE;
     maxTries++;
 }
@@ -195,7 +191,7 @@ int llopen(LinkLayer connectionParameters) {
         StateMachine UA_stateMachine = {START, UA, 1};
 
         // RETRANSMIT MECHANISM AND UA CONFIRMATION
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries <= connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("SENDING SET FRAME!\n");
@@ -204,7 +200,6 @@ int llopen(LinkLayer connectionParameters) {
             // Waiting for UA confirmation
             read(fd, &byte_received, 1);
             StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
-            printf("0x%0x\n", byte_received[0]);
 
             // UA frame received and connection is now established
             if (UA_stateMachine.currentState == STOP) {
@@ -226,7 +221,6 @@ int llopen(LinkLayer connectionParameters) {
         while (TRUE) {
             // Waiting for SET confirmation
             read(fd, &byte_received, 1);
-            printf("0x%0x\n", byte_received[0]);
             StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
             // SET frame received
@@ -290,7 +284,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     unsigned char REJ1_frame[BUF_SIZE] = {0};
 
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
-    while (maxTries < connectionParameters.nRetransmissions) {
+    while (maxTries <= connectionParameters.nRetransmissions) {
         if (alarmEnabled == FALSE) {
             alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
             alarmEnabled = TRUE;
@@ -299,9 +293,6 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
         // Waiting for RR confirmation
         int n_byte = read(fd, &byte_received, 1);
-        if (n_byte > 0) {
-            printf("Received byte: 0x%x\n", byte_received[0]);
-        }
 
         StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
         StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
@@ -408,12 +399,6 @@ int llread(unsigned char *packet) {
         copyDataFrame(dataFrame1, dataFrame, frame_index);
     }
 
-    printf("DATA PACKET RECEIVED: \n");
-    for (int i = 0; i <= frame_index; i++) {
-        printf("0x%x ", dataFrame[i]);
-    }
-    printf("\n\n");
-
     // Destuffing of the DATA and BBC2
     int dD_index = 0; // Data destuffed index
     int skip_index = 0; // Used to skip character for the special cases
@@ -437,23 +422,12 @@ int llread(unsigned char *packet) {
         dD_index++;
     }
 
-    printf("Data Destuffed: \n");
-    for (int i = 0; i < dD_index; i++) {
-        printf("0x%x ", packet[i]);
-    }
-    printf("\n\n");
-
     // Verify BCC2 validaty
     unsigned char checkBCC2 = packet[0];
-    printf("CALCULATING BCC2: \n");
     for (int i = 1; i < dD_index-1; i++) {
-        printf("0x%02x XOR 0x%02x = ", checkBCC2, packet[i]);
         checkBCC2 ^= packet[i];
-        printf("0x%02x\n", checkBCC2);
     }
 
-    printf("\ndD_index: %d\n", dD_index);
-    printf("\nInfo Number: %d\n", infoNumber);
     printf("BCC2 FROM DATA: 0x%02x\n", packet[dD_index-1]);
     printf("BCC2 CALCULATED: 0x%02x\n", checkBCC2);
     
@@ -466,7 +440,6 @@ int llread(unsigned char *packet) {
         // IF equal to the one that was expected to receive
         if (infoNumber == receiver_control) {
             receiver_control = !receiver_control;
-            printf("%d\n", receiver_control);
             return dD_index;
         }
         // ELSE RETURN -1, MEANING PACKET WAS REPEATED, NOT TO BE SAVED
@@ -494,7 +467,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         restartAlarm();
         DiscFrame(1);
         StateMachine DISC_stateMachine = {START, DISC, 2};
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries <= connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("Sending DISC Frame!\n");
@@ -534,7 +507,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         
         DiscFrame(2);
         restartAlarm();
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries <= connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("Sending DISC Frame!\n");

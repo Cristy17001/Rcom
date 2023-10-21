@@ -23,34 +23,55 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     if (connection_parameters.role == LlTx) {
         unsigned char frame[MAX_PAYLOAD_SIZE] = {0};
+        unsigned char data[MAX_PAYLOAD_SIZE] = {0};
+        FILE *file;
+        int bytesRead;
+        file = fopen(filename, "rb");
 
-        // START CONTROL PACKET
-        int n_bytes = buildControlPacket(5000, filename, 12, frame, TRUE);
-        llwrite(connection_parameters, frame, n_bytes);
-
-
-        short nDataBytes = 4;
-        unsigned char data[4] = {0x2, 0x5, 0x6, 0x7};
-        buildDataPacket(nDataBytes, frame, data);
-
-        printf("\nDATA: ");
-        for (int i = 0; i < nDataBytes+3; i++) {
-            printf("0x%x ", frame[i]);
+        if (!file) {
+            perror("Error opening input file");
+            exit(1);
         }
-        printf("\n");
-        llwrite(connection_parameters, frame, nDataBytes+3);
 
-        // END CONTROL PACKET
-        n_bytes = buildControlPacket(5000, filename, 12, frame, FALSE);
+        fseek(file, 0, SEEK_END);
+        const long size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        ///////////////////////////
+        // START CONTROL PACKET  //
+        ///////////////////////////
+        int n_bytes = buildControlPacket(size, filename, 12, frame, TRUE);
         llwrite(connection_parameters, frame, n_bytes);
+
+        ///////////////////////////
+        // SENDING DATA PACKET   //
+        ///////////////////////////
+        while ((bytesRead = fread(data, sizeof(*data), MAX_PAYLOAD_SIZE-100, file)) > 0) {            
+            buildDataPacket(bytesRead, frame, data);
+            llwrite(connection_parameters, frame, bytesRead+3);            
+        }
+
+        ///////////////////////////
+        // END CONTROL PACKET    //
+        ///////////////////////////
+        n_bytes = buildControlPacket(size, filename, 12, frame, FALSE);
+        llwrite(connection_parameters, frame, n_bytes);
+
+        fclose(file);
     }
     else if (connection_parameters.role == LlRx) {
+        FILE *file_out;
+        file_out = fopen(filename, "wb");
+        if (!file_out) {
+            perror("Error opening input file");
+            exit(1);
+        }
+
         unsigned char receivedData[MAX_PAYLOAD_SIZE*2];
         int response = 0;
 
         while (receivedData[0] != END_CTRL) {            
             response = llread(receivedData);
-            printf("DATA 0: 0x%0x\n", receivedData[0]);
 
             if (response == -1) {
                 printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n");
@@ -60,13 +81,12 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n");
                 if (receivedData[0] == DATA_CTRL) {
                     int dataSize = getDataSize(receivedData);
-                    printf("Data Size: %i\n", dataSize);
-                    for (int i = 0; i < dataSize; i++) {
-                        printf("0x%x ", receivedData[3+i]);
-                    }
+                    fwrite(&receivedData[3], 1, dataSize, file_out);
                 }
+
             }
         }
+        fclose(file_out);
     }
 
     if (llclose(connection_parameters, 0) != 0) {
@@ -100,10 +120,10 @@ int buildControlPacket(const long int file_size, const char *filename, unsigned 
     return offset-1; // Return the number of bytes written in the frame
 }
 
-void buildDataPacket(short nDataBytes, unsigned char* packet, unsigned char* data) {
+void buildDataPacket(int nDataBytes, unsigned char* packet, unsigned char* data) {
     packet[0] = DATA_CTRL;
-    packet[1] = ((nDataBytes >> 8) & 0xf);
-    packet[2] = nDataBytes & 0xf;
+    packet[1] = ((nDataBytes >> 8) & 0xff);
+    packet[2] = nDataBytes & 0xff;
     for (int i = 0; i < nDataBytes; i++) {
         packet[3+i] = data[i]; 
     }
