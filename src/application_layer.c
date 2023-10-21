@@ -25,7 +25,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         unsigned char frame[MAX_PAYLOAD_SIZE] = {0};
         unsigned char data[MAX_PAYLOAD_SIZE] = {0};
         FILE *file;
-        int bytesRead;
+        int bytesRead = 1;
         file = fopen(filename, "rb");
 
         if (!file) {
@@ -41,22 +41,34 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         // START CONTROL PACKET  //
         ///////////////////////////
         int n_bytes = buildControlPacket(size, filename, 12, frame, TRUE);
-        llwrite(connection_parameters, frame, n_bytes);
+        if (llwrite(connection_parameters, frame, n_bytes) == 1) {
+            printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
+            fclose(file);
+            exit(1);
+        }
 
         ///////////////////////////
         // SENDING DATA PACKET   //
         ///////////////////////////
-        while ((bytesRead = fread(data, sizeof(*data), MAX_PAYLOAD_SIZE-100, file)) > 0) {            
+        while (bytesRead > 0) {        
+            bytesRead = fread(data, sizeof(*data), MAX_PAYLOAD_SIZE-100, file);    
             buildDataPacket(bytesRead, frame, data);
-            llwrite(connection_parameters, frame, bytesRead+3);            
+            if (llwrite(connection_parameters, frame, bytesRead+3) == 1) {
+                printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
+                fclose(file);
+                exit(1);
+            }            
         }
 
         ///////////////////////////
         // END CONTROL PACKET    //
         ///////////////////////////
         n_bytes = buildControlPacket(size, filename, 12, frame, FALSE);
-        llwrite(connection_parameters, frame, n_bytes);
-
+        if (llwrite(connection_parameters, frame, n_bytes) == 1) {
+            printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
+            fclose(file);
+            exit(1);
+        }
         fclose(file);
     }
     else if (connection_parameters.role == LlRx) {
@@ -74,11 +86,11 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             response = llread(receivedData);
 
             if (response == -1) {
-                printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n");
+                printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n\n");
                 continue;
             }
             else if (response >= 0) {
-                printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n");
+                printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n\n");
                 if (receivedData[0] == DATA_CTRL) {
                     int dataSize = getDataSize(receivedData);
                     fwrite(&receivedData[3], 1, dataSize, file_out);

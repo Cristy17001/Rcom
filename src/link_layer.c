@@ -29,7 +29,10 @@ void restartAlarm() {
 
 void SendMainFrame(int signal) {
     write(fd, mainFrame, sizeMainFrame);
-    printf("Sent mainFrame #%d: \n", maxTries);
+    printf("\n\nSent mainFrame #%d: \n", maxTries);
+    for (int i = 0; i < sizeMainFrame; i++) {
+        printf("0x%x ", mainFrame[i]);
+    }
     alarmEnabled = FALSE;
     maxTries++;
 }
@@ -183,29 +186,32 @@ int llopen(LinkLayer connectionParameters) {
 
     // Emissor
     if (connectionParameters.role == LlTx) {
-        SetFrame(); // Place the set frame in the mainFrame
-
         // UA confirmation auxiliar variables
         unsigned char byte_received[1] = {0};
         unsigned char UA_frame[BUF_SIZE] = {0};
         StateMachine UA_stateMachine = {START, UA, 1};
 
+        SetFrame(); // Place the set frame in the mainFrame
+        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
+
         // RETRANSMIT MECHANISM AND UA CONFIRMATION
-        while (maxTries <= connectionParameters.nRetransmissions) {
+        while (maxTries < connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("SENDING SET FRAME!\n");
                 alarmEnabled = TRUE;
             }
             // Waiting for UA confirmation
-            read(fd, &byte_received, 1);
-            StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes != 0) {
+                StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
 
-            // UA frame received and connection is now established
-            if (UA_stateMachine.currentState == STOP) {
-                printf("UA FRAME RECEIVED!\n");
-                printf("CONNECTION ESTABLISHED!\n\n");
-                return 0;
+                // UA frame received and connection is now established
+                if (UA_stateMachine.currentState == STOP) {
+                    printf("UA FRAME RECEIVED!\n");
+                    printf("CONNECTION ESTABLISHED!\n\n");
+                    return 0;
+                }
             }
         }
     }
@@ -220,16 +226,18 @@ int llopen(LinkLayer connectionParameters) {
 
         while (TRUE) {
             // Waiting for SET confirmation
-            read(fd, &byte_received, 1);
-            StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes != 0) {
+                StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
-            // SET frame received
-            if (SET_stateMachine.currentState == STOP) {
-                printf("SET FRAME RECEIVED!\n");
-                UAFrame(1);
-                printf("SENDING UA FRAME!\n");
-                write(fd, mainFrame, sizeMainFrame);
-                return 0;
+                // SET frame received
+                if (SET_stateMachine.currentState == STOP) {
+                    printf("SET FRAME RECEIVED!\n");
+                    UAFrame(1);
+                    printf("SENDING UA FRAME!\n");
+                    write(fd, mainFrame, sizeMainFrame);
+                    return 0;
+                }
             }
         }
         
@@ -273,7 +281,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     restartAlarm();
     unsigned char byte_received[1] = {0};
 
-    printf("WAITING CONFIRMATION OR REJECTION!\n");
+    //printf("WAITING CONFIRMATION OR REJECTION!\n");
     StateMachine RR0_stateMachine = {START, RR0, 1};
     StateMachine RR1_stateMachine = {START, RR1, 1};
     unsigned char RR0_frame[BUF_SIZE] = {0};
@@ -283,8 +291,9 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     unsigned char REJ0_frame[BUF_SIZE] = {0};
     unsigned char REJ1_frame[BUF_SIZE] = {0};
 
+    //write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
-    while (maxTries <= connectionParameters.nRetransmissions) {
+    while (maxTries != connectionParameters.nRetransmissions+1) {
         if (alarmEnabled == FALSE) {
             alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
             alarmEnabled = TRUE;
@@ -292,63 +301,64 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
 
         // Waiting for RR confirmation
-        int n_byte = read(fd, &byte_received, 1);
+        int n_bytes = read(fd, &byte_received, 1);
 
-        StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
-        StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
-        StateHandler(&REJ0_stateMachine, byte_received[0], REJ0_frame, Communication);
-        StateHandler(&REJ1_stateMachine, byte_received[0], REJ1_frame, Communication);
-        
+        if (n_bytes != 0) {
+            StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
+            StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
+            StateHandler(&REJ0_stateMachine, byte_received[0], REJ0_frame, Communication);
+            StateHandler(&REJ1_stateMachine, byte_received[0], REJ1_frame, Communication);            
 
-        if (transmissor_control == 0) {
-            if (RR0_stateMachine.currentState == STOP) {
-                printf("Positive ACK %d frame received, REPETITION DETECTED!\n", 0);
-                RR0_stateMachine.currentState = START;
-                restartAlarm();
-            }   
-            else if (RR1_stateMachine.currentState == STOP) {
-                printf("Positive ACK %d frame received, FRAME CORRECTLY SENT!\n", 1);
-                transmissor_control = 1;
-                free(stuffedBuf);
-                return 0;
+            if (transmissor_control == 0) {
+                if (RR0_stateMachine.currentState == STOP) {
+                    printf("\nRR0 RECEIVED!\n");
+                    RR0_stateMachine.currentState = START;
+                    restartAlarm();
+                }   
+                else if (RR1_stateMachine.currentState == STOP) {
+                    printf("\nRR1 RECEIVED!\n");
+                    transmissor_control = 1;
+                    printf("TRANSMISSOR CONTROL WAS CHANGED TO 1\n");
+                    free(stuffedBuf);
+                    return 0;
+                }
+                else if (REJ0_stateMachine.currentState == STOP) {
+                    printf("\nREJ0 RECEIVED!\n");
+                    REJ0_stateMachine.currentState = START;
+                    restartAlarm();
+                }
+                else if (REJ1_stateMachine.currentState == STOP) {
+                    printf("\nREJ1 RECEIVED!\n");
+                    REJ1_stateMachine.currentState = START;
+                    restartAlarm();
+                }
             }
-            else if (REJ0_stateMachine.currentState == STOP) {
-                printf("Negative ACK %d frame received, REPETITION DETECTED!\n", 0);
-                REJ0_stateMachine.currentState = START;
-                restartAlarm();
-            }
-            else if (REJ1_stateMachine.currentState == STOP) {
-                printf("Negative ACK %d frame received, FRAME BCC2 DIDN'T MATCH!\n", 1);
-                REJ1_stateMachine.currentState = START;
-                restartAlarm();
+            else if (transmissor_control == 1)  {
+                if (RR0_stateMachine.currentState == STOP) {
+                    printf("\nRR0 RECEIVED!\n");
+                    transmissor_control = 0;
+                    printf("TRANSMISSOR CONTROL WAS CHANGED TO 0\n");
+                    free(stuffedBuf);
+                    return 0;
+
+                }
+                else if (RR1_stateMachine.currentState == STOP) {
+                    printf("\nRR1 RECEIVED!\n");
+                    RR1_stateMachine.currentState = START;
+                    restartAlarm();
+                }
+                else if (REJ0_stateMachine.currentState == STOP) {
+                    printf("\nREJ0 RECEIVED!\n");
+                    REJ0_stateMachine.currentState = START;
+                    restartAlarm();
+                }
+                else if (REJ1_stateMachine.currentState == STOP) {
+                    printf("\nREJ1 RECEIVED!\n");
+                    REJ1_stateMachine.currentState = START;
+                    restartAlarm();
+                }
             }
         }
-        else if (transmissor_control == 1)  {
-            if (RR0_stateMachine.currentState == STOP) {
-                printf("Positive ACK %d frame received, FRAME CORRECTLY SENT!\n", 0);
-                transmissor_control = 0;
-                free(stuffedBuf);
-                return 0;
-
-            }
-            else if (RR1_stateMachine.currentState == STOP) {
-                printf("Positive ACK %d frame received, REPETITION DETECTED!\n", 1);
-                RR1_stateMachine.currentState = START;
-                restartAlarm();
-            }
-            else if (REJ0_stateMachine.currentState == STOP) {
-                printf("Negative ACK %d frame received, FRAME BCC2 DIDN'T MATCH!\n", 0);
-                REJ0_stateMachine.currentState = START;
-                restartAlarm();
-            }
-            else if (REJ1_stateMachine.currentState == STOP) {
-                printf("Negative ACK %d frame received, REPETITION DETECTED!\n", 1);
-                REJ1_stateMachine.currentState = START;
-                restartAlarm();
-            }
-        }
-
-
     }
 
     // Free dynamically allocated memory
@@ -373,22 +383,26 @@ int llread(unsigned char *packet) {
 
 
     // Process the data received until correct frame structure works
+    printf("Data Received: \n");
     while (TRUE) {
-        read(fd, &byte_received, 1);
+        int n_bytes = read(fd, &byte_received, 1);
+        if (n_bytes != 0) {
+            printf("0x%x ", byte_received[0]);
+            // Process the data received and return the index of the current frame
+            StateHandler(&info0_StateMachine, byte_received[0], dataFrame0, Data);
+            StateHandler(&info1_StateMachine, byte_received[0], dataFrame1, Data);
 
-        // Process the data received and return the index of the current frame
-        StateHandler(&info0_StateMachine, byte_received[0], dataFrame0, Data);
-        StateHandler(&info1_StateMachine, byte_received[0], dataFrame1, Data);
-
-        if (info0_StateMachine.currentState == STOP) {
-            infoNumber = 0;
-            break;
-        }
-        else if (info1_StateMachine.currentState == STOP) {
-            infoNumber = 1;
-            break;
+            if (info0_StateMachine.currentState == STOP) {
+                infoNumber = 0;
+                break;
+            }
+            else if (info1_StateMachine.currentState == STOP) {
+                infoNumber = 1;
+                break;
+            }
         }
     }
+    tcflush(fd, TCIOFLUSH);
 
     if (infoNumber == 0) {
         frame_index = info0_StateMachine.frameSize; 
@@ -428,26 +442,31 @@ int llread(unsigned char *packet) {
         checkBCC2 ^= packet[i];
     }
 
-    printf("BCC2 FROM DATA: 0x%02x\n", packet[dD_index-1]);
-    printf("BCC2 CALCULATED: 0x%02x\n", checkBCC2);
+    //printf("\nBCC2 FROM DATA: 0x%02x\n", packet[dD_index-1]);
+    //printf("BCC2 CALCULATED: 0x%02x\n", checkBCC2);
     
     // VALID BCC2
     if (packet[dD_index-1] == checkBCC2) {
-        if (infoNumber == 0) {DataResponseFrame(RR1);}
-        else if (infoNumber == 1) {DataResponseFrame(RR0);}
+        if (infoNumber == 0) {DataResponseFrame(RR1); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR1!\n", infoNumber, receiver_control);}
+        else if (infoNumber == 1) {DataResponseFrame(RR0); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR0!\n", infoNumber, receiver_control);}
         write(fd, mainFrame, sizeMainFrame);
+    
         
         // IF equal to the one that was expected to receive
         if (infoNumber == receiver_control) {
+            // Reverse the control that is supose to receive
             receiver_control = !receiver_control;
             return dD_index;
         }
-        // ELSE RETURN -1, MEANING PACKET WAS REPEATED, NOT TO BE SAVED
-        return -1;
+        else {
+            // ELSE RETURN -1, MEANING PACKET WAS REPEATED, NOT TO BE SAVED
+            printf("REPEATED PACKET!\n");
+            return -1;
+        }
     }
     else {
-        if (infoNumber == 0) {DataResponseFrame(REJ1);}
-        else if (infoNumber == 1) {DataResponseFrame(REJ0);}
+        if (infoNumber == 0) {DataResponseFrame(REJ1);printf("SENT REJ1!\n");}
+        else if (infoNumber == 1) {DataResponseFrame(REJ0);printf("SENT REJ0!\n");}
         write(fd, mainFrame, sizeMainFrame);
 
         // RETURN -1, MEANING PACKET SHOULD'T BE SAVED
@@ -467,25 +486,29 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         restartAlarm();
         DiscFrame(1);
         StateMachine DISC_stateMachine = {START, DISC, 2};
-        while (maxTries <= connectionParameters.nRetransmissions) {
+        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
+
+        while (maxTries < connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("Sending DISC Frame!\n");
                 alarmEnabled = TRUE;
             }
             // Waiting for DISC confirmation
-            read(fd, &byte_received, 1);
-            StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes != 0) {
+                StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
-            // DISC frame received, sending UA
-            if (DISC_stateMachine.currentState == STOP) {
-                printf("DISC frame received!\n");
-                printf("Sending UA frame!\n");
+                // DISC frame received, sending UA
+                if (DISC_stateMachine.currentState == STOP) {
+                    printf("DISC frame received!\n");
+                    printf("Sending UA frame!\n");
 
-                // Sending UA
-                UAFrame(2);
-                write(fd, mainFrame, sizeMainFrame);
-                return 0;
+                    // Sending UA
+                    UAFrame(2);
+                    write(fd, mainFrame, sizeMainFrame);
+                    return 0;
+                }
             }
         }
     }
@@ -494,32 +517,39 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         StateMachine UA_stateMachine = {START, UA, 2};
 
         while (TRUE) {
-            read(fd, &byte_received, 1);
-            StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes != 0) {
+                printf("Receiver control: %d\n", receiver_control);
+                StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
-            // DISC frame received, sending DISC
-            if (DISC_stateMachine.currentState == STOP) {
-                printf("DISC frame received!\n");
-                printf("Sending DISC frame!\n");
-                break;
+                // DISC frame received, sending DISC
+                if (DISC_stateMachine.currentState == STOP) {
+                    printf("DISC frame received!\n");
+                    printf("Sending DISC frame!\n");
+                    break;
+                }
             }
         }
         
         DiscFrame(2);
         restartAlarm();
-        while (maxTries <= connectionParameters.nRetransmissions) {
+        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
+
+        while (maxTries < connectionParameters.nRetransmissions) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("Sending DISC Frame!\n");
                 alarmEnabled = TRUE;
             }
-            read(fd, &byte_received, 1);
-            StateHandler(&UA_stateMachine, byte_received[0], buf, Communication);
+            int n_bytes = read(fd, &byte_received, 1);
+            if (n_bytes != 0) {
+                StateHandler(&UA_stateMachine, byte_received[0], buf, Communication);
 
-            if (UA_stateMachine.currentState == STOP) {
-                printf("UA frame received!\n");
-                printf("Seizing all communication!\n");
-                return 0;
+                if (UA_stateMachine.currentState == STOP) {
+                    printf("UA frame received!\n");
+                    printf("Seizing all communication!\n");
+                    return 0;
+                }
             }
         }
     }
