@@ -83,7 +83,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         int response = 0;
 
         while (receivedData[0] != END_CTRL) {            
-            response = llread(receivedData);
+            response = llread(connection_parameters, receivedData);
 
             if (response == -1) {
                 printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n\n");

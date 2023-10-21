@@ -27,12 +27,16 @@ void restartAlarm() {
     alarmEnabled = FALSE;
 }
 
-void SendMainFrame(int signal) {
+void SendMainFrame() {
     write(fd, mainFrame, sizeMainFrame);
     printf("\n\nSent mainFrame #%d: \n", maxTries);
     for (int i = 0; i < sizeMainFrame; i++) {
         printf("0x%x ", mainFrame[i]);
     }
+}
+
+void alarmHandler(int signal) {
+    printf("\n\nWAITED TIMEOUT TIME! #%d\n", maxTries);
     alarmEnabled = FALSE;
     maxTries++;
 }
@@ -182,7 +186,7 @@ int llopen(LinkLayer connectionParameters) {
     printf("\nPORT CONFIG DONE!\n\n");
 
     // ALARM SETUP
-    (void)signal(SIGALRM, SendMainFrame);
+    (void)signal(SIGALRM, alarmHandler);
 
     // Emissor
     if (connectionParameters.role == LlTx) {
@@ -192,17 +196,17 @@ int llopen(LinkLayer connectionParameters) {
         StateMachine UA_stateMachine = {START, UA, 1};
 
         SetFrame(); // Place the set frame in the mainFrame
-        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
 
         // RETRANSMIT MECHANISM AND UA CONFIRMATION
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries != connectionParameters.nRetransmissions+1) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 printf("SENDING SET FRAME!\n");
+                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
                 alarmEnabled = TRUE;
             }
             // Waiting for UA confirmation
-            int n_bytes = read(fd, &byte_received, 1);
+            int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
                 StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
 
@@ -224,9 +228,16 @@ int llopen(LinkLayer connectionParameters) {
         StateMachine SET_stateMachine = {START, SET, 1};
         printf("WAITING SET FRAME!\n");
 
-        while (TRUE) {
+        while (maxTries != connectionParameters.nRetransmissions+2) {
+            // ALARM TO LIMIT THE AMOUNT OF TIME READER WAITS
+            if (alarmEnabled == FALSE) {
+                alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+                printf("SENDING SET FRAME!\n");
+                alarmEnabled = TRUE;
+            }
+
             // Waiting for SET confirmation
-            int n_bytes = read(fd, &byte_received, 1);
+            int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
                 StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
@@ -240,7 +251,10 @@ int llopen(LinkLayer connectionParameters) {
                 }
             }
         }
-        
+        if (maxTries == connectionParameters.nRetransmissions+2) {
+            printf("LIMIT OF WAITING TIME EXCEEDED! CLOSING CONNECTION!\n");
+            exit(1);
+        }
     }
 
     return 1;
@@ -250,6 +264,8 @@ int llopen(LinkLayer connectionParameters) {
 // LLWRITE
 ////////////////////////////////////////////////
 int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSize) {
+    restartAlarm();
+
     // Payload BCC2
     unsigned char BCC2[2] = {0};
     PayloadBCC2(buf, bufSize, BCC2);
@@ -277,8 +293,6 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
         sizeMainFrame = newSize+6;
     }
 
-
-    restartAlarm();
     unsigned char byte_received[1] = {0};
 
     //printf("WAITING CONFIRMATION OR REJECTION!\n");
@@ -291,18 +305,17 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
     unsigned char REJ0_frame[BUF_SIZE] = {0};
     unsigned char REJ1_frame[BUF_SIZE] = {0};
 
-    //write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
     // RETRANSMITION MECHANISM AND RR CONFIRMATION
     while (maxTries != connectionParameters.nRetransmissions+1) {
         if (alarmEnabled == FALSE) {
             alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+            if (maxTries != connectionParameters.nRetransmissions+1) {SendMainFrame();}
             alarmEnabled = TRUE;
         }
 
 
         // Waiting for RR confirmation
-        int n_bytes = read(fd, &byte_received, 1);
-
+        int n_bytes = read(fd, byte_received, 1);
         if (n_bytes != 0) {
             StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
             StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
@@ -370,7 +383,9 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet) {
+int llread(LinkLayer connectionParameters, unsigned char *packet) {
+    restartAlarm();
+
     StateMachine info0_StateMachine = {START, INFO0, 1};
     StateMachine info1_StateMachine = {START, INFO1, 1};
     unsigned char dataFrame0[MAX_PAYLOAD_SIZE * 2] = {0}; 
@@ -384,8 +399,13 @@ int llread(unsigned char *packet) {
 
     // Process the data received until correct frame structure works
     printf("Data Received: \n");
-    while (TRUE) {
-        int n_bytes = read(fd, &byte_received, 1);
+    while (maxTries != connectionParameters.nRetransmissions+2) {
+        if (alarmEnabled == FALSE) {
+            alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
+            alarmEnabled = TRUE;
+        }
+
+        int n_bytes = read(fd, byte_received, 1);
         if (n_bytes != 0) {
             printf("0x%x ", byte_received[0]);
             // Process the data received and return the index of the current frame
@@ -402,7 +422,11 @@ int llread(unsigned char *packet) {
             }
         }
     }
-    tcflush(fd, TCIOFLUSH);
+    if (maxTries == connectionParameters.nRetransmissions+2) {
+        printf("LIMIT OF WAITING TIME EXCEEDED! CLOSING CONNECTION!\n");
+        exit(1);
+    }
+    restartAlarm();
 
     if (infoNumber == 0) {
         frame_index = info0_StateMachine.frameSize; 
@@ -449,7 +473,7 @@ int llread(unsigned char *packet) {
     if (packet[dD_index-1] == checkBCC2) {
         if (infoNumber == 0) {DataResponseFrame(RR1); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR1!\n", infoNumber, receiver_control);}
         else if (infoNumber == 1) {DataResponseFrame(RR0); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR0!\n", infoNumber, receiver_control);}
-        write(fd, mainFrame, sizeMainFrame);
+        SendMainFrame();
     
         
         // IF equal to the one that was expected to receive
@@ -467,7 +491,7 @@ int llread(unsigned char *packet) {
     else {
         if (infoNumber == 0) {DataResponseFrame(REJ1);printf("SENT REJ1!\n");}
         else if (infoNumber == 1) {DataResponseFrame(REJ0);printf("SENT REJ0!\n");}
-        write(fd, mainFrame, sizeMainFrame);
+        SendMainFrame();
 
         // RETURN -1, MEANING PACKET SHOULD'T BE SAVED
         return -1;
@@ -479,23 +503,23 @@ int llread(unsigned char *packet) {
 // LLCLOSE
 ////////////////////////////////////////////////
 int llclose(LinkLayer connectionParameters, int showStatistics) {
+    restartAlarm();
     unsigned char buf[BUF_SIZE] = {0};
     unsigned char byte_received[1] = {0};
 
     if (connectionParameters.role == LlTx) {
-        restartAlarm();
-        DiscFrame(1);
         StateMachine DISC_stateMachine = {START, DISC, 2};
-        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
+        DiscFrame(1);
 
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries != connectionParameters.nRetransmissions+1) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
-                printf("Sending DISC Frame!\n");
                 alarmEnabled = TRUE;
+                printf("Sending DISC Frame!\n");
+                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
             }
             // Waiting for DISC confirmation
-            int n_bytes = read(fd, &byte_received, 1);
+            int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
                 StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
@@ -506,7 +530,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
 
                     // Sending UA
                     UAFrame(2);
-                    write(fd, mainFrame, sizeMainFrame);
+                    SendMainFrame();
                     return 0;
                 }
             }
@@ -517,7 +541,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         StateMachine UA_stateMachine = {START, UA, 2};
 
         while (TRUE) {
-            int n_bytes = read(fd, &byte_received, 1);
+            int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
                 printf("Receiver control: %d\n", receiver_control);
                 StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
@@ -532,16 +556,15 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         }
         
         DiscFrame(2);
-        restartAlarm();
-        write(fd, mainFrame, sizeMainFrame); // FIRST TRANSMISSION
 
-        while (maxTries < connectionParameters.nRetransmissions) {
+        while (maxTries != connectionParameters.nRetransmissions+1) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
-                printf("Sending DISC Frame!\n");
                 alarmEnabled = TRUE;
+                printf("Sending DISC Frame!\n");
+                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
             }
-            int n_bytes = read(fd, &byte_received, 1);
+            int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
                 StateHandler(&UA_stateMachine, byte_received[0], buf, Communication);
 

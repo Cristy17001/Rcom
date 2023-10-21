@@ -36,7 +36,8 @@ typedef struct
 #define MAX_PAYLOAD_SIZE 1000
 
 void restartAlarm();
-void SendMainFrame(int signal);
+void SendMainFrame();
+void alarmHandler(int signal);
 void SetFrame();
 void UAFrame(int address);
 void DiscFrame(int address);
@@ -55,7 +56,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
 // Receive data in packet.
 // Return number of chars read, or "-1" on error.
-int llread(unsigned char *packet);
+int llread(LinkLayer connectionParameters, unsigned char *packet);
 
 // Close previously opened connection.
 // if showStatistics == TRUE, link layer should print statistics in the console on close.
