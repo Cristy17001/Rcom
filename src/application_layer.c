@@ -22,36 +22,30 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     if (connection_parameters.role == LlTx) {
-        unsigned char testControl[MAX_PAYLOAD_SIZE] = {0};
+        unsigned char frame[MAX_PAYLOAD_SIZE] = {0};
 
         // START CONTROL PACKET
-        int n_bytes = buildControlFrame(5000, filename, 12, testControl, TRUE);
-        llwrite(connection_parameters, testControl, n_bytes);
+        int n_bytes = buildControlPacket(5000, filename, 12, frame, TRUE);
+        llwrite(connection_parameters, frame, n_bytes);
+
+
+        short nDataBytes = 4;
+        unsigned char data[4] = {0x2, 0x5, 0x6, 0x7};
+        buildDataPacket(nDataBytes, frame, data);
+
+        printf("\nDATA: ");
+        for (int i = 0; i < nDataBytes+3; i++) {
+            printf("0x%x ", frame[i]);
+        }
+        printf("\n");
+        llwrite(connection_parameters, frame, nDataBytes+3);
 
         // END CONTROL PACKET
-        n_bytes = buildControlFrame(5000, filename, 12, testControl, FALSE);
-        llwrite(connection_parameters, testControl, n_bytes);
-
-
-
-        /*unsigned char test_buffer[11] = {0};
-
-        for (int i = 0; i <= 9; i++) {
-            test_buffer[i] =  (0x07 + i);
-        }
-        test_buffer[10] = 0x7e;
-        llwrite(connection_parameters, test_buffer, 11);
-        llwrite(connection_parameters, test_buffer, 11);
-
-        for (int i = 0; i <= 10; i++) {
-            test_buffer[i] =  (0x02 + i);
-        }
-        llwrite(connection_parameters, test_buffer, 11);
-        */
+        n_bytes = buildControlPacket(5000, filename, 12, frame, FALSE);
+        llwrite(connection_parameters, frame, n_bytes);
     }
     else if (connection_parameters.role == LlRx) {
         unsigned char receivedData[MAX_PAYLOAD_SIZE*2];
-        int responseCounter = 0;
         int response = 0;
 
         while (receivedData[0] != END_CTRL) {            
@@ -60,11 +54,18 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
             if (response == -1) {
                 printf("THIS PACKET SHOULD NOT BE SAVED, EITHER BECAUSE OF BCC2 ERROR OR PACKET REPETITION\n");
+                continue;
             }
             else if (response >= 0) {
                 printf("THIS PACKET SHOULD BE SAVED, THE BCC2 IS CORRECT AND THERE WAS NO REPETITION!\n");
+                if (receivedData[0] == DATA_CTRL) {
+                    int dataSize = getDataSize(receivedData);
+                    printf("Data Size: %i\n", dataSize);
+                    for (int i = 0; i < dataSize; i++) {
+                        printf("0x%x ", receivedData[3+i]);
+                    }
+                }
             }
-            responseCounter++;
         }
     }
 
@@ -72,7 +73,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         printf("FAILED TO TERMINATE CONNECTION!\n");
         exit(1);
     }
-    
 }
 
 int buildControlPacket(const long int file_size, const char *filename, unsigned char name_size, unsigned char* frame, int isStart) {
@@ -107,4 +107,8 @@ void buildDataPacket(short nDataBytes, unsigned char* packet, unsigned char* dat
     for (int i = 0; i < nDataBytes; i++) {
         packet[3+i] = data[i]; 
     }
+}
+
+int getDataSize(unsigned char* data) {
+    return 256 * data[1] + data[2];
 }
