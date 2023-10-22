@@ -7,6 +7,8 @@
 #define BUF_SIZE 5
 
 // Global variables
+struct termios oldtio;
+struct termios newtio;
 unsigned char mainFrame[MAX_PAYLOAD_SIZE];
 int sizeMainFrame = MAX_PAYLOAD_SIZE;
 int fd = 0;
@@ -29,10 +31,11 @@ void restartAlarm() {
 
 void SendMainFrame() {
     write(fd, mainFrame, sizeMainFrame);
-    printf("\n\nSent mainFrame #%d: \n", maxTries);
-    for (int i = 0; i < sizeMainFrame; i++) {
-        printf("0x%x ", mainFrame[i]);
-    }
+    //printf("\n\nSent mainFrame #%d: \n", maxTries);
+    //for (int i = 0; i < sizeMainFrame; i++) {
+    //    printf("0x%x ", mainFrame[i]);
+    //}
+    //printf("\n");
 }
 
 void alarmHandler(int signal) {
@@ -152,9 +155,6 @@ int llopen(LinkLayer connectionParameters) {
         exit(-1);
     }
 
-    struct termios oldtio;
-    struct termios newtio;
-
     // Save current port settings
     if (tcgetattr(fd, &oldtio) == -1) {
         perror("tcgetattr");
@@ -201,8 +201,11 @@ int llopen(LinkLayer connectionParameters) {
         while (maxTries != connectionParameters.nRetransmissions+1) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
-                printf("SENDING SET FRAME!\n");
-                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
+                if (maxTries != connectionParameters.nRetransmissions+1) {
+                    printf("SENDING SET FRAME!\n");
+                    SendMainFrame();
+                }
+
                 alarmEnabled = TRUE;
             }
             // Waiting for UA confirmation
@@ -232,7 +235,7 @@ int llopen(LinkLayer connectionParameters) {
             // ALARM TO LIMIT THE AMOUNT OF TIME READER WAITS
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
-                printf("SENDING SET FRAME!\n");
+                printf("WAITING SET FRAME!\n");
                 alarmEnabled = TRUE;
             }
 
@@ -295,7 +298,6 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
 
     unsigned char byte_received[1] = {0};
 
-    //printf("WAITING CONFIRMATION OR REJECTION!\n");
     StateMachine RR0_stateMachine = {START, RR0, 1};
     StateMachine RR1_stateMachine = {START, RR1, 1};
     unsigned char RR0_frame[BUF_SIZE] = {0};
@@ -398,7 +400,7 @@ int llread(LinkLayer connectionParameters, unsigned char *packet) {
 
 
     // Process the data received until correct frame structure works
-    printf("Data Received: \n");
+    //printf("Data Received: \n");
     while (maxTries != connectionParameters.nRetransmissions+2) {
         if (alarmEnabled == FALSE) {
             alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
@@ -407,7 +409,7 @@ int llread(LinkLayer connectionParameters, unsigned char *packet) {
 
         int n_bytes = read(fd, byte_received, 1);
         if (n_bytes != 0) {
-            printf("0x%x ", byte_received[0]);
+            // printf("0x%x ", byte_received[0]);
             // Process the data received and return the index of the current frame
             StateHandler(&info0_StateMachine, byte_received[0], dataFrame0, Data);
             StateHandler(&info1_StateMachine, byte_received[0], dataFrame1, Data);
@@ -471,8 +473,8 @@ int llread(LinkLayer connectionParameters, unsigned char *packet) {
     
     // VALID BCC2
     if (packet[dD_index-1] == checkBCC2) {
-        if (infoNumber == 0) {DataResponseFrame(RR1); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR1!\n", infoNumber, receiver_control);}
-        else if (infoNumber == 1) {DataResponseFrame(RR0); printf("\n INFONUMBER: %d | RECEIVER_CONTROL: %d |SENT RR0!\n", infoNumber, receiver_control);}
+        if (infoNumber == 0) {DataResponseFrame(RR1);}
+        else if (infoNumber == 1) {DataResponseFrame(RR0);}
         SendMainFrame();
     
         
@@ -489,8 +491,8 @@ int llread(LinkLayer connectionParameters, unsigned char *packet) {
         }
     }
     else {
-        if (infoNumber == 0) {DataResponseFrame(REJ1);printf("SENT REJ1!\n");}
-        else if (infoNumber == 1) {DataResponseFrame(REJ0);printf("SENT REJ0!\n");}
+        if (infoNumber == 0) {DataResponseFrame(REJ1);}
+        else if (infoNumber == 1) {DataResponseFrame(REJ0);}
         SendMainFrame();
 
         // RETURN -1, MEANING PACKET SHOULD'T BE SAVED
@@ -515,8 +517,10 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 alarmEnabled = TRUE;
-                printf("Sending DISC Frame!\n");
-                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
+                if (maxTries != connectionParameters.nRetransmissions+1) {
+                    printf("Sending DISC Frame!\n");
+                    SendMainFrame();
+                }
             }
             // Waiting for DISC confirmation
             int n_bytes = read(fd, byte_received, 1);
@@ -531,7 +535,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
                     // Sending UA
                     UAFrame(2);
                     SendMainFrame();
-                    return 0;
+                    break;
                 }
             }
         }
@@ -543,7 +547,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         while (TRUE) {
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
-                printf("Receiver control: %d\n", receiver_control);
+                // printf("Receiver control: %d\n", receiver_control);
                 StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
                 // DISC frame received, sending DISC
@@ -561,8 +565,10 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
             if (alarmEnabled == FALSE) {
                 alarm(connectionParameters.timeout); // Set alarm to be triggered in "timeout" seconds
                 alarmEnabled = TRUE;
-                printf("Sending DISC Frame!\n");
-                if (maxTries != connectionParameters.nRetransmissions) SendMainFrame();
+                if (maxTries != connectionParameters.nRetransmissions+1) {
+                    printf("Sending DISC Frame!\n");
+                    SendMainFrame();
+                }
             }
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
@@ -571,11 +577,21 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
                 if (UA_stateMachine.currentState == STOP) {
                     printf("UA frame received!\n");
                     printf("Seizing all communication!\n");
-                    return 0;
+                    break;
                 }
             }
         }
     }
-    printf("Some error occurred seizing communication!\n");
-    return 1;
+    // The while() cycle should be changed in order to respect the specifications
+    // of the protocol indicated in the Lab guide
+
+    // Restore the old port settings
+    if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
+    {
+        perror("tcsetattr");
+        exit(-1);
+    }
+
+    close(fd);
+    return 0;
 }

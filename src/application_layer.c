@@ -5,22 +5,19 @@
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename) {
     
-    LinkLayerRole linkRole = (strcmp(role, "rx") == 0 ? LlRx : LlTx);
-    char aux_serialPort[50];
-    strcpy(aux_serialPort, serialPort);  // Copy the contents of serialPort to aux_serialPort
-    LinkLayer connection_parameters = {0};  // Initialize the struct with all fields set to 0
-    strcpy(connection_parameters.serialPort, aux_serialPort); // Copy aux_serialPort to serialPort field
-    connection_parameters.role = linkRole;
-    connection_parameters.baudRate = baudRate;
-    connection_parameters.nRetransmissions = nTries;
-    connection_parameters.timeout = timeout;
+    // INITIALIZE LAYER CONNECTION VARIABLE
+    LinkLayerRole linkRole = strcmp(role, "rx") == 0 ? LlRx : LlTx;
+    LinkLayer connection_parameters = { .role = linkRole, .baudRate = baudRate, .nRetransmissions = nTries, .timeout = timeout };
+    snprintf(connection_parameters.serialPort, sizeof(connection_parameters.serialPort), "%s", serialPort);
 
-    // Establish connection with UA and SET
+
+    // ESTABLISH CONNECTION WITH SET AND UA
     if (llopen(connection_parameters) != 0) {
         printf("FAILED TO ESTABLISH CONNECTION!\n");
         exit(1);
     }
 
+    // TRANSMISSOR
     if (connection_parameters.role == LlTx) {
         unsigned char frame[MAX_PAYLOAD_SIZE] = {0};
         unsigned char data[MAX_PAYLOAD_SIZE] = {0};
@@ -33,6 +30,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             exit(1);
         }
 
+        // GET THE NUMBER OF BYTES IN THE FILE
         fseek(file, 0, SEEK_END);
         const long size = ftell(file);
         fseek(file, 0, SEEK_SET);
@@ -40,7 +38,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         ///////////////////////////
         // START CONTROL PACKET  //
         ///////////////////////////
-        int n_bytes = buildControlPacket(size, filename, 12, frame, TRUE);
+        int n_bytes = buildControlPacket(size, filename, strlen(filename), frame, TRUE);
         if (llwrite(connection_parameters, frame, n_bytes) == 1) {
             printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
             fclose(file);
@@ -51,7 +49,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         // SENDING DATA PACKET   //
         ///////////////////////////
         while (bytesRead > 0) {        
-            bytesRead = fread(data, sizeof(*data), MAX_PAYLOAD_SIZE-100, file);    
+            bytesRead = fread(data, sizeof(*data), MAX_PAYLOAD_SIZE-50, file);    
             buildDataPacket(bytesRead, frame, data);
             if (llwrite(connection_parameters, frame, bytesRead+3) == 1) {
                 printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
@@ -63,7 +61,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         ///////////////////////////
         // END CONTROL PACKET    //
         ///////////////////////////
-        n_bytes = buildControlPacket(size, filename, 12, frame, FALSE);
+        n_bytes = buildControlPacket(size, filename, strlen(filename), frame, FALSE);
         if (llwrite(connection_parameters, frame, n_bytes) == 1) {
             printf("ERROR: MAXIMUM RETRANSMISSIONS EXCEEDED!");
             fclose(file);
@@ -71,9 +69,11 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         }
         fclose(file);
     }
+    // RECEIVER
     else if (connection_parameters.role == LlRx) {
         FILE *file_out;
         file_out = fopen(filename, "wb");
+
         if (!file_out) {
             perror("Error opening input file");
             exit(1);
@@ -101,11 +101,13 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         fclose(file_out);
     }
 
-    if (llclose(connection_parameters, 0) != 0) {
+    // CLOSE CONNECTION WITH DISC FROM TX, DISC FROM RX AND UA FROM TX
+    if (llclose(connection_parameters, FALSE) != 0) {
         printf("FAILED TO TERMINATE CONNECTION!\n");
         exit(1);
     }
 }
+
 
 int buildControlPacket(const long int file_size, const char *filename, unsigned char name_size, unsigned char* frame, int isStart) {
     long int file_size_aux = file_size;    
