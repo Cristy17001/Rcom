@@ -14,8 +14,7 @@
 //   $1: /dev/ttySxx
 //   $2: tx | rx
 //   $3: filename
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     if (argc < 4)
     {
         printf("Usage: %s /dev/ttySxx tx|rx filename\n", argv[0]);

@@ -6,6 +6,11 @@
 #define _POSIX_SOURCE 1 // POSIX compliant source
 #define BUF_SIZE 5
 
+// Variables for statistics
+struct timeval start, end;
+int n_bits_received = 0, n_bits_sent = 0;
+
+
 // Global variables
 struct termios oldtio;
 struct termios newtio;
@@ -31,6 +36,7 @@ void restartAlarm() {
 
 void SendMainFrame() {
     write(fd, mainFrame, sizeMainFrame);
+    n_bits_sent += sizeMainFrame * 8;
     //printf("\n\nSent mainFrame #%d: \n", maxTries);
     //for (int i = 0; i < sizeMainFrame; i++) {
     //    printf("0x%x ", mainFrame[i]);
@@ -185,6 +191,10 @@ int llopen(LinkLayer connectionParameters) {
     }
     printf("\nPORT CONFIG DONE!\n\n");
 
+    // Record the start time
+    gettimeofday(&start, NULL);
+
+
     // ALARM SETUP
     (void)signal(SIGALRM, alarmHandler);
 
@@ -211,6 +221,7 @@ int llopen(LinkLayer connectionParameters) {
             // Waiting for UA confirmation
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
+                n_bits_received += n_bytes * 8;
                 StateHandler(&UA_stateMachine, byte_received[0], UA_frame, Communication);
 
                 // UA frame received and connection is now established
@@ -242,6 +253,7 @@ int llopen(LinkLayer connectionParameters) {
             // Waiting for SET confirmation
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
+                n_bits_received += n_bytes * 8;
                 StateHandler(&SET_stateMachine, byte_received[0], SET_frame, Communication);
 
                 // SET frame received
@@ -319,6 +331,7 @@ int llwrite(LinkLayer connectionParameters, const unsigned char *buf, int bufSiz
         // Waiting for RR confirmation
         int n_bytes = read(fd, byte_received, 1);
         if (n_bytes != 0) {
+            n_bits_received += n_bytes * 8;
             StateHandler(&RR0_stateMachine, byte_received[0], RR0_frame, Communication);
             StateHandler(&RR1_stateMachine, byte_received[0], RR1_frame, Communication);
             StateHandler(&REJ0_stateMachine, byte_received[0], REJ0_frame, Communication);
@@ -409,6 +422,7 @@ int llread(LinkLayer connectionParameters, unsigned char *packet) {
 
         int n_bytes = read(fd, byte_received, 1);
         if (n_bytes != 0) {
+            n_bits_received += n_bytes * 8;
             // printf("0x%x ", byte_received[0]);
             // Process the data received and return the index of the current frame
             StateHandler(&info0_StateMachine, byte_received[0], dataFrame0, Data);
@@ -525,13 +539,14 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
             // Waiting for DISC confirmation
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
+                n_bits_received += n_bytes * 8;
                 StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
                 // DISC frame received, sending UA
                 if (DISC_stateMachine.currentState == STOP) {
                     printf("DISC frame received!\n");
                     printf("Sending UA frame!\n");
-
+                    printf("Seizing all communication!\n\n");
                     // Sending UA
                     UAFrame(2);
                     SendMainFrame();
@@ -547,6 +562,7 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
         while (TRUE) {
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
+                n_bits_received += n_bytes * 8;
                 // printf("Receiver control: %d\n", receiver_control);
                 StateHandler(&DISC_stateMachine, byte_received[0], buf, Communication);
 
@@ -572,11 +588,12 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
             }
             int n_bytes = read(fd, byte_received, 1);
             if (n_bytes != 0) {
+                n_bits_received += n_bytes * 8;
                 StateHandler(&UA_stateMachine, byte_received[0], buf, Communication);
 
                 if (UA_stateMachine.currentState == STOP) {
                     printf("UA frame received!\n");
-                    printf("Seizing all communication!\n");
+                    printf("Seizing all communication!\n\n");
                     break;
                 }
             }
@@ -593,5 +610,20 @@ int llclose(LinkLayer connectionParameters, int showStatistics) {
     }
 
     close(fd);
+    // Record the end time
+    gettimeofday(&end, NULL);
+
+    if (showStatistics) {
+        // Calculate elapsed time in milliseconds
+        long long elapsed_milliseconds = ((end.tv_sec - start.tv_sec) * 1000LL + (end.tv_usec - start.tv_usec) / 1000);
+        printf("Elapsed time: %lld milliseconds\n", elapsed_milliseconds);
+        printf("BITS RECEIVED: %d\n", n_bits_received);
+        printf("BITS SENT: %d \n", n_bits_sent);
+        printf("BITS PER SECOND: %.2f\n", ((double)n_bits_received) / (elapsed_milliseconds/1000.0));
+    
+    }
+
+
+
     return 0;
 }

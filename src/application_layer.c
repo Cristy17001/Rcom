@@ -102,7 +102,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     // CLOSE CONNECTION WITH DISC FROM TX, DISC FROM RX AND UA FROM TX
-    if (llclose(connection_parameters, FALSE) != 0) {
+    if (llclose(connection_parameters, TRUE) != 0) {
         printf("FAILED TO TERMINATE CONNECTION!\n");
         exit(1);
     }
